@@ -986,6 +986,13 @@ details.adv[open]>summary::before{content:"▾ "}
       AWS ECR, GHCR, Azure ACR, custom) under Settings → Container sources, then attaches that
       source to a component when entering its image URL. Public images need none. Like platform
       creds, a source's credentials are registry access config, not the app's own secrets.
+   13. A RUN IS A POINT-IN-TIME SNAPSHOT of every component it used, exactly as set in the
+      pipeline WHEN IT RAN — not just the wiring + entered arg values, but each component's full
+      DEFINITION at that moment (its arg schema, image tag, compatibility…). If a scorer later
+      gains a new argument (even one with a default), older runs must STILL show the old shape
+      with no such argument — so you can always see precisely which pipeline produced those
+      results. (This demo freezes the graph wiring + entered values; the real app must also
+      snapshot each component's definition, not read the component's current one.)
    ───────────────────────────────────────────────────────────────────────────── */
 
 const SCORE_DAYS = 14;
@@ -1194,6 +1201,8 @@ pipelines.forEach(p=>{ (p.versions||[]).forEach(v=>{ if(!v.graph) v.graph=p.grap
 
 // Runs: a single EXECUTION of a pipeline. No name of its own — the UI shows the pipeline's name + when it ran.
 // run.graph is a FROZEN snapshot of the pipeline at launch, so later edits to the pipeline never rewrite history.
+// REAL-IMPL NOTE 13: the real app must also snapshot each component's DEFINITION at launch (arg schema, image,
+// compatibility) onto the run — the demo's read-only inspector reads the component's CURRENT definition instead.
 let runs = [
   {id:'r1',pipelineId:'p1',pver:3,subjects:['a','c','b'],    status:'running',progress:64,started:'12m ago',results:267,score:84},
   {id:'r2',pipelineId:'p2',pver:1,subjects:['b','d','a'],    status:'done',  started:'18h ago',results:140,score:87},
@@ -2469,6 +2478,7 @@ function renderDocs(){
         `<b>Multi-platform execution.</b> A container can run on Docker, Cloud Run, Lambda, Cloudflare Workers or Supabase Functions — chosen per container. Platform credentials live in Settings and are NOT secrets.`,
         `<b>Container sources.</b> Private images are pulled via a connected registry (Docker Hub, GCP AR, ECR, GHCR, ACR, custom) attached to the component; a source's credentials are registry access config, not the app's secrets.`,
         `<b>Versioning.</b> Every pipeline edit makes a new version; runs belong to a version and all aggregation is per version.`,
+        `<b>Runs are point-in-time snapshots.</b> A run freezes the full config of every component it used — wiring, entered arg values, AND each component's definition (arg schema, image, compatibility) as it was WHEN IT RAN. If a component later gains a new arg, older runs still show the old shape, so you always see exactly which pipeline produced those results.`,
       ])}
       <div class="doc-note"><b>Builder implementation note.</b> This demo's pipeline builder is hand-rolled (single self-contained file, opens over <span class="mono">file://</span>). The real app should use <b>React Flow</b> — it supports typed handles on any side (top / bottom / left / right) natively, which a from-scratch canvas here provides by hand.</div>
     </div>`;
