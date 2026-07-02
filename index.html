@@ -309,7 +309,7 @@ details.adv[open]>summary::before{content:"▾ "}
 .zlbl{font-family:var(--mono);font-size:11px;color:var(--fg-3);min-width:44px;text-align:center;user-select:none}
 
 .node{position:absolute;pointer-events:auto;width:210px;background:linear-gradient(180deg,var(--card-2),var(--ink-2));
-  border:1px solid var(--line-2);border-radius:12px;box-shadow:0 12px 30px rgba(0,0,0,.45);user-select:none;transition:box-shadow .15s,border-color .15s}
+  border:2px solid var(--line-2);border-radius:12px;box-shadow:0 12px 30px rgba(0,0,0,.45);user-select:none;transition:box-shadow .15s,border-color .15s}
 /* per-type node border colour so each kind is easy to tell apart (defined BEFORE :hover/.sel so those still win) */
 .node.t-subject{border-color:var(--violet)}
 .node.t-connector{border-color:var(--cyan)}
@@ -1020,6 +1020,14 @@ details.adv[open]>summary::before{content:"▾ "}
       compatibility) silently flows into this same version and changes what it runs. And if
       the source adds a REQUIRED arg the node doesn't set, runs FAIL until fixed by hand.
       Default OFF → reproducible, self-contained versions.
+   17. RUNNER ↔ COMPONENT ENDPOINTS (env). The runner talks to the connector/storage/scorer
+      containers over the network; it receives their endpoints via PLURAL env vars —
+      CONNECTOR_ENDPOINTS, STORAGE_ENDPOINTS, SCORER_ENDPOINTS — each a COMMA-SEPARATED list
+      (a runner may drive several of a kind). e.g.
+      SCORER_ENDPOINTS=abcxx.scorers.scorer-a.pbintra.io,bbb.scorers.scorer-b.pbintra.io
+   18. RUNNER MUST REACH PBINTRA. Beyond driving the components (NOTE 17), the runner MUST be
+      able to send requests to PBIntra — otherwise it cannot report results back. It uses its
+      temporary run token (NOTE 3) against the PBIntra endpoint to report each result (NOTE 4).
    ───────────────────────────────────────────────────────────────────────────── */
 
 const SCORE_DAYS = 14;
@@ -2569,6 +2577,8 @@ function renderDocs(){
         `<b>Run token.</b> When a component starts, PBIntra issues it a <b>temporary token</b> to call back (fetch test data, report results, resolve secrets); it is <b>revoked</b> when the component finishes.`,
         `<b>Data flow.</b> The runner ALWAYS reports to PBIntra; uploaders are the next hop and take no custom schema (fixed ingest API, not yet finalised).`,
         `<b>Fan-out.</b> A runner may use many scorers and pull from many storages; PBIntra may forward to many uploaders.`,
+        `<b>Component endpoints (env).</b> The runner reaches the containers it drives via plural env vars — <span class="mono">CONNECTOR_ENDPOINTS</span>, <span class="mono">STORAGE_ENDPOINTS</span>, <span class="mono">SCORER_ENDPOINTS</span> — each a comma-separated list (it may drive several of a kind).`,
+        `<b>Runner must reach PBIntra.</b> It also needs network access to PBIntra — without it, results can't be reported back. It reports each result to the PBIntra endpoint using its temporary run token.`,
         `<b>Subject metadata → runner.</b> A subject's metadata is not part of its identity, but it IS handed to the runner at run time so the runner can use it if it needs to.`,
         `<b>Configurable args.</b> Each component declares its own args (required / optional / optional-with-default; a default may be a secret); the user fills them per node when building a pipeline.`,
         `<b>Multi-platform execution.</b> A container can run on Docker, Cloud Run, Lambda, Cloudflare Workers or Supabase Functions — chosen per container. Platform credentials live in Settings and are NOT secrets.`,
