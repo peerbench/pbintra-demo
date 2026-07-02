@@ -1088,14 +1088,59 @@ details.adv[open]>summary::before{content:"▾ "}
       overlapping schedules can't spawn duplicate runs. (Same behaviour as renisa's triggers.)
       Firing a trigger creates a normal Run of that pipeline (same as the Run button), so all
       run machinery (token, snapshot, reporting) is unchanged — triggers are just the launcher.
-   21. EDITING AN IN-USE COMPONENT. When a user saves an edit to a component that is already
-      referenced by ≥1 pipeline AND an EXECUTION-affecting field changed (anything except name &
-      description — img, source, args, or a runner's connectors/storages/scorers), the UI must
-      show a confirm dialog before applying. The dialog states: existing runs are unaffected
-      (each froze the component at launch); future runs can drift (keep-in-sync nodes adopt the
-      new config next run, pinned nodes only on a new version — NOTE 16); this hurts a pipeline's
-      reproducibility; and for a behaviour-affecting change the pipelines using it should cut a
-      NEW version before their next run. Name/description-only edits skip the warning.
+   21. EDITING A COMPONENT THAT IS KEPT IN SYNC. When a user saves an edit to a component AND an
+      EXECUTION-affecting field changed (anything except name & description — img, source, args,
+      or a runner's connectors/storages/scorers), the UI must show a confirm dialog before
+      applying — BUT ONLY IF ≥1 pipeline uses that component with keep-in-sync-with-source on
+      (NOTE 16). Snapshot-pinned usages (the default) already froze the component, so a source
+      edit cannot reach them and they need no warning; keep-sync is the only path that leaks the
+      change into an existing pipeline version. The dialog states: existing runs are unaffected
+      (each froze the component at launch); pinned pipelines are unaffected; but keep-sync
+      pipelines' next run uses the new config, making that version no longer reproducible; so for
+      a behaviour-affecting change they should cut a NEW version (re-snapshots) or turn off
+      keep-sync. Name/description-only edits, and components no pipeline keep-syncs, skip it.
+   22. EVERYTHING IS A CONTAINER; FIVE COMPONENT KINDS. Every processing unit is a container
+      image. A component = a prebuilt image URL + an id-safe NAME (its DB id — [A-Za-z0-9_-], no
+      spaces) + an optional description. Five kinds: CONNECTOR (talks to a subject), STORAGE
+      (serves test cases), RUNNER (orchestrates the loop), SCORER (grades a response), UPLOADER
+      (optional export sink, NOTE 4). PBIntra ships a reusable library, so users usually just
+      CONFIGURE a component rather than build one. The PBIntra "hub" is NOT a component — it is a
+      FIXED node: always present, cannot be removed, has no config; every runner reports to it.
+   23. WIRING / COMPATIBILITY RULES (enforced at build time — the builder refuses invalid edges):
+      (a) a SUBJECT connects only to a CONNECTOR it declared compatible with;
+      (b) a RUNNER accepts a connector/storage/scorer only if that container is in the runner's
+          declared connectors/storages/scorers list — an EMPTY list means it accepts NONE of that
+          kind (self-contained, NOTE 5);
+      (c) the runner's only output is the PBINTRA hub; only the runner may feed the hub; the hub
+          forwards only to UPLOADERS; an uploader receives only from the hub, never the runner.
+      Typed input ports have fixed sides on the runner (STORAGE top, CONNECTOR left, SCORER
+      bottom; output right). Changing a node's component drops any edge that becomes invalid.
+   24. CONNECTORS DEFINE A SUBJECT'S REQUIRED CONFIG FIELDS. Each connector declares the config
+      fields a subject must supply to be reachable through it (e.g. openai-api → base_url[value,
+      required], api_key[secret,required], model[value,optional]). When a subject selects its
+      compatible connectors, the union of those fields loads as the subject's properties to fill
+      (each bound to a value or a secret). This is why identity = name + properties (NOTE 1): the
+      connector-required config IS the subject. PBIntra itself stays schemaless — it does not know
+      which property is a "url" or a "key"; the connector's field list is the only schema hint.
+   25. SCHEMALESS RESULTS + SHAPES. A result is free-form JSON { testCase, response, score };
+      PBIntra assumes NO field names. A SHAPE is a user-defined RENDERING RULE for one distinct
+      structure — a structure's identity is the full RECURSIVE set of its keys+types (order-
+      independent), so every structurally-distinct object maps to exactly one shape (kept per
+      entity: testCase / response / score). A shape lays fields out in ROWS × COLUMNS; each field
+      = a JSONPath + a UI element type (text, badge, score-meter, number, date, image, audio…) +
+      per-type options (label, unit/decimals, colour, format, size…). No shape defined for a seen
+      structure → raw-JSON fallback.
+   26. FIELD MARKING. Because results are schemaless, the RUNNER tags which field PBIntra should
+      read: the TEST-CASE ID field (on testCase) and the SCORE VALUE field (on score); a response
+      carries no marker. PBIntra interprets ONLY these marked fields — the results list surfaces
+      just the marked values (test-case id + score), everything else stays opaque until a row is
+      expanded (where the marked field gets a small badge). (Demo: run.markers = {idField,
+      scoreField}.)
+   27. API SCHEMA IS DOCUMENTATION-ONLY. A connector/storage/scorer MAY attach an OpenAPI spec,
+      purely to DOCUMENT the container — it renders (Scalar) on the component's detail page and
+      has ZERO effect on execution or wiring; there is no default schema. A RUNNER is outbound-
+      only and an UPLOADER implements the fixed PBIntra ingest API (NOTE 4) — neither takes a
+      custom schema.
    ───────────────────────────────────────────────────────────────────────────── */
 
 const SCORE_DAYS = 14;
@@ -1322,6 +1367,10 @@ function snapshotNode(n){
     connectors:c.connectors?[...c.connectors]:undefined, storages:c.storages?[...c.storages]:undefined, scorers:c.scorers?[...c.scorers]:undefined};
 }
 function snapshotGraph(graph){ if(graph&&graph.nodes) graph.nodes.forEach(snapshotNode); return graph; }
+// DEMO: one seed pipeline keeps its runner in sync with source (must be set BEFORE snapshotting so those nodes are
+// left un-pinned) — gives the "editing an in-use component" warning (NOTE 21) a live example. Only keep-sync usage
+// is affected by a source edit; snapshot-pinned pipelines are not, so only these should be warned about.
+pipelines.filter(p=>p.id==='p3').forEach(p=>{ [p.graph,...(p.versions||[]).map(v=>v.graph)].filter(Boolean).forEach(g=>(g.nodes||[]).forEach(n=>{ if(n.type==='runner') n.keepSync=true; })); });
 // baseline: snapshot every seed pipeline/version graph with the ORIGINAL defs (nothing edited yet)
 pipelines.forEach(p=>{ snapshotGraph(p.graph); (p.versions||[]).forEach(v=>{ if(v.graph) snapshotGraph(v.graph); }); });
 
@@ -1462,13 +1511,14 @@ const $$ = s=>[...document.querySelectorAll(s)];
 const el = (t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;};
 const subjById = id => subjects.find(s=>s.id===id);
 const pipelineById = id => pipelines.find(p=>p.id===id);
-// pipelines that reference a component by name (across the current graph + any version graph) — for the "editing a
-// component that pipelines already use" Save warning. Returns distinct pipeline names.
-function pipelinesUsingComponent(name){
+// pipelines that use a component in KEEP-IN-SYNC-WITH-SOURCE mode (across current + version graphs) — the ONLY ones
+// affected by editing the component's source (snapshot-pinned usages keep their frozen copy). Drives the NOTE 21
+// Save warning. Returns distinct pipeline names.
+function pipelinesKeepSyncingComponent(name){
   const used=[];
   pipelines.forEach(p=>{
     const graphs=[p.graph, ...(p.versions||[]).map(v=>v.graph)].filter(Boolean);
-    if(graphs.some(g=>(g.nodes||[]).some(n=>n.comp===name))) used.push(p.name);
+    if(graphs.some(g=>(g.nodes||[]).some(n=>n.comp===name && n.keepSync))) used.push(p.name);
   });
   return used;
 }
@@ -3028,19 +3078,19 @@ function openDrawer(kind, editIdx){
         if(ec){ components[editIdx]=obj; renderComponents(); if($('[data-page="componentDetail"]').classList.contains('active')) openComponent(editIdx); toast('Component “'+name+'” updated'); }
         else { const at=components.findIndex(c=>!c.builtin); components.splice(at<0?components.length:at,0,obj); renderComponents(); toast('Component “'+name+'” registered'); }
       };
-      // Editing a component that pipelines already USE + an execution-affecting field (anything but name/desc)
-      // changed → warn before applying (REAL-IMPL NOTE 21). Existing runs are frozen; the concern is future runs
-      // + reproducibility. Recommend cutting a new pipeline version to capture a behaviour-affecting change.
+      // Editing a component + an execution-affecting field (anything but name/desc) changed → warn ONLY IF a
+      // pipeline uses it with KEEP-IN-SYNC-WITH-SOURCE on (REAL-IMPL NOTE 21). Snapshot-pinned usages (the default)
+      // already froze the component, so they're unaffected and need no warning — keep-sync is what leaks the change.
       if(ec && componentExecSig(ec)!==componentExecSig(obj)){
-        const users=pipelinesUsingComponent(ec.name);
+        const users=pipelinesKeepSyncingComponent(ec.name);
         if(users.length){
           confirmDialog({
-            title:'Update a component that pipelines use?',
+            title:'Update a component kept in sync?',
             confirmLabel:'Update component',
-            bodyHtml:`<div class="cfm-warn">Changing how <b>${escapeHtml(ec.name)}</b> runs (not just its name/description) affects pipelines that already use it.</div>
-              <p><b>Existing runs stay exactly as they were</b> — every run froze this component at launch, so past results are safe.</p>
-              <p>But <b>future runs</b> can drift: a pipeline node set to <b>keep in sync with source</b> will pick up this new config on its next run, while pinned nodes only adopt it when you cut a new version. Either way it can make a pipeline's <b>reproducibility hard to track</b>.</p>
-              <p>If this is a <b>behaviour-affecting</b> change, the pipelines below should <b>create a new version</b> before their next run so the change is captured intentionally:</p>
+            bodyHtml:`<div class="cfm-warn">The pipelines below use <b>${escapeHtml(ec.name)}</b> with <b>keep in sync with source</b> on, so this change (not just name/description) flows straight into them.</div>
+              <p><b>Existing runs stay exactly as they were</b> — every run froze this component at launch. Pipelines that <b>snapshotted</b> this component (the default) are also unaffected — they keep their pinned copy.</p>
+              <p>But because these keep it <b>live</b>, their <b>next run uses the new config</b>, which makes the version <b>no longer reproducible</b> (the change is applied retroactively to an existing version).</p>
+              <p>If this is a <b>behaviour-affecting</b> change, they should <b>cut a new version</b> (which re-snapshots) — or turn off keep-sync — so the change is captured intentionally:</p>
               <div class="cfm-list">${users.map(u=>`<span class="cfm-chip">${escapeHtml(u)}</span>`).join('')}</div>`,
             onConfirm:()=>{ doSave(); closeDrawer(); },
           });
