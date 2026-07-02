@@ -532,6 +532,9 @@ details.adv[open]>summary::before{content:"▾ "}
 .trig-status{font-size:11px;font-weight:700;padding:1px 9px;border-radius:20px}
 .trig-status.on{color:var(--pbintra);background:rgba(62,207,142,.13)}
 .trig-status.off{color:var(--fg-3);background:var(--line-2)}
+/* pagination bar under long tables (runs / pipelines / versions / results / secrets) */
+.pager{display:flex;align-items:center;justify-content:center;gap:14px;padding:12px 4px 6px}
+.pager:empty{display:none}
 /* Tom Select (compatible-connectors multi-select) — themed to match */
 .ts-wrapper{font-family:var(--sans)}
 .ts-control{background:var(--ink-3)!important;border:1px solid var(--line-2)!important;border-radius:9px!important;color:var(--fg)!important;box-shadow:none!important;padding:6px 8px!important;gap:5px!important}
@@ -819,6 +822,7 @@ details.adv[open]>summary::before{content:"▾ "}
             <thead><tr><th>Pipeline</th><th>Created</th><th style="width:110px">Runs</th><th style="width:180px"></th></tr></thead>
             <tbody id="pipelinesBody"></tbody>
           </table>
+          <div class="pager" id="pipelinesPager"></div>
         </div>
       </section>
 
@@ -846,6 +850,7 @@ details.adv[open]>summary::before{content:"▾ "}
             <thead><tr><th>Pipeline</th><th>Subjects</th><th>Status</th><th>Started</th><th>Results</th><th style="width:160px">Avg score</th><th></th></tr></thead>
             <tbody id="runsBody"></tbody>
           </table>
+          <div class="pager" id="runsPager"></div>
         </div>
       </section>
 
@@ -864,6 +869,7 @@ details.adv[open]>summary::before{content:"▾ "}
             <thead><tr><th style="width:30px">#</th><th>Test case ID</th><th>Subject</th><th style="width:170px">Score</th></tr></thead>
             <tbody id="resultsBody"></tbody>
           </table>
+          <div class="pager" id="resultsPager"></div>
         </div>
       </section>
 
@@ -927,6 +933,7 @@ details.adv[open]>summary::before{content:"▾ "}
             <thead><tr><th>Name</th><th>Value</th><th>Used by</th><th>Last used</th><th></th></tr></thead>
             <tbody id="secretsBody"></tbody>
           </table>
+          <div class="pager" id="secretsPager"></div>
         </div>
       </section>
 
@@ -1365,6 +1372,11 @@ let pipelines = [
   // SCORER OPTIONAL: a runner that self-grades → storage feeds it, but no scorer node in the pipeline.
   {id:'p7',name:'Latency-only probe',    graph:synthGraph(['b','d'], null, {scorer:null}),                            createdAt:'1d ago', version:1, versions:[{version:1,createdAt:'1d ago',note:'initial · no scorer'}]},
 ];
+// demo: give p1 a long version history (v10..v1) so the version list paginates ("çok item varsa"). v4..v10 reuse
+// v3's graph; runs stay on their existing pver (v3/v2 still present). Must run BEFORE the snapshot loop below.
+;(()=>{ const p=pipelines.find(x=>x.id==='p1'); if(!p) return; const g=p.versions[0].graph;
+  for(let v=4; v<=10; v++) p.versions.unshift({version:v, createdAt:(12-v)+'d ago', note:'tuning pass '+v, graph:g});
+  p.version=10; })();
 
 // demo: give every seed version a graph snapshot (reuse the pipeline's current graph as a placeholder)
 // so past versions can be inspected / run / used as an edit base like the real (versioned) system would.
@@ -1404,6 +1416,12 @@ let runs = [
   {id:'r6',pipelineId:'p1',pver:3,subjects:['a','c','b'],    status:'done',  started:'1d 4h ago',results:267,score:80},
   {id:'r7',pipelineId:'p1',pver:2,subjects:['a','c'],        status:'done',  started:'14d ago',results:255,score:76},
   {id:'r8',pipelineId:'p3',pver:1,subjects:['a','c','e','d'],status:'done',  started:'10d ago',results:498,score:79},
+  {id:'r9', pipelineId:'p3',pver:2,subjects:['a','c','e','d'],status:'done', started:'2d ago', results:512,score:82},
+  {id:'r10',pipelineId:'p4',pver:1,subjects:['d','a'],        status:'done', started:'3d ago', results:60, score:80},
+  {id:'r11',pipelineId:'p2',pver:1,subjects:['b','d','a'],    status:'done', started:'4d ago', results:140,score:85},
+  {id:'r12',pipelineId:'p1',pver:3,subjects:['a','c','b'],    status:'done', started:'5d ago', results:267,score:83},
+  {id:'r13',pipelineId:'p6',pver:2,subjects:['a','c'],        status:'done', started:'6d ago', results:120,score:88},
+  {id:'r14',pipelineId:'p3',pver:2,subjects:['a','c','e','d'],status:'done', started:'7d ago', results:512,score:80},
 ];
 
 let secrets = [
@@ -1411,6 +1429,12 @@ let secrets = [
   {name:'ALTEOS_AGENT_TOKEN',val:'alt_tok_77b1…9a0f',used:1,last:'18h ago'},
   {name:'GOOGLE_AI_KEY',val:'AIzaSyB4…Qk',used:1,last:'1d ago'},
   {name:'ELEVENLABS_KEY',val:'el_2c8d…b4',used:1,last:'1d ago'},
+  {name:'PINECONE_API_KEY',val:'pc_9a1f…3d',used:2,last:'3h ago'},
+  {name:'HF_TOKEN',val:'hf_4b2e…7c',used:1,last:'2d ago'},
+  {name:'BIGQUERY_SA_JSON',val:'{…}_svc…9a',used:1,last:'5d ago'},
+  {name:'S3_SECRET_KEY',val:'aws_7f3c…1b',used:2,last:'6h ago'},
+  {name:'WEBHOOK_SIGNING_SECRET',val:'whs_2d9a…4e',used:1,last:'1d ago'},
+  {name:'AZURE_OPENAI_KEY',val:'az_5e8b…0f',used:0,last:'never'},
 ];
 
 // ── Execution platforms + container sources ─────────────────────────────────
@@ -1977,9 +2001,30 @@ $$('#compFilter button').forEach(b=>b.onclick=()=>{
 });
 
 /* ════════════════ runs ════════════════ */
+// ── pagination (long lists: runs / pipelines / versions / results / secrets) ──
+// current page per list (0-based). A render slices `page*size .. +size`; mountPager draws Prev/Next only when >1 page.
+let runsPage=0, pipesPage=0, secPage=0, resPage=0, verPage=0, verPagePid=null;
+const PAGE={runs:10, pipelines:6, secrets:8, results:15, versions:8};
+// fill a pager container; hides itself (empty) when everything fits on one page. goTo(newPage) sets the page + re-renders.
+function mountPager(sel, total, page, pageSize, goTo){
+  const c=$(sel); if(!c) return;
+  const pages=Math.ceil(total/pageSize);
+  if(pages<=1){ c.innerHTML=''; return; }
+  const from=page*pageSize+1, to=Math.min(total,(page+1)*pageSize);
+  c.innerHTML=`<button class="btn ghost sm" ${page<=0?'disabled':''} data-go="prev">‹ Prev</button>
+    <span class="mono" style="font-size:11px;color:var(--fg-3)">${from}–${to} of ${total} · page ${page+1}/${pages}</span>
+    <button class="btn ghost sm" ${page>=pages-1?'disabled':''} data-go="next">Next ›</button>`;
+  c.querySelector('[data-go=prev]').onclick=()=>goTo(Math.max(0,page-1));
+  c.querySelector('[data-go=next]').onclick=()=>goTo(Math.min(pages-1,page+1));
+}
+// clamp a page index into range for `total` items at `size` per page
+function clampPage(page,total,size){ const pages=Math.max(1,Math.ceil(total/size)); return Math.min(Math.max(0,page),pages-1); }
+
 function renderRuns(){
   const tb=$('#runsBody'); tb.innerHTML='';
-  runs.forEach(r=>{
+  runsPage=clampPage(runsPage, runs.length, PAGE.runs);
+  const slice=runs.slice(runsPage*PAGE.runs, (runsPage+1)*PAGE.runs);
+  slice.forEach(r=>{
     ensureSim(r);   // results/score derive from the run's own subjects
     const p=pipelineById(r.pipelineId);
     const tr=el('tr');
@@ -1998,13 +2043,15 @@ function renderRuns(){
     tb.appendChild(tr);
   });
   $('#nav-runs').textContent=runs.length;
+  mountPager('#runsPager', runs.length, runsPage, PAGE.runs, p=>{ runsPage=p; renderRuns(); });
   animMeters($('[data-page="runs"]'));
 }
 
 /* ════════════════ pipelines ════════════════ */
 function renderPipelines(){
   const tb=$('#pipelinesBody'); tb.innerHTML='';
-  pipelines.forEach(p=>{
+  pipesPage=clampPage(pipesPage, pipelines.length, PAGE.pipelines);
+  pipelines.slice(pipesPage*PAGE.pipelines, (pipesPage+1)*PAGE.pipelines).forEach(p=>{
     const n=runs.filter(r=>r.pipelineId===p.id).length;   // how many runs used this pipeline
     const nver=(p.versions||[]).length||1;
     const tr=el('tr');
@@ -2018,6 +2065,7 @@ function renderPipelines(){
     tb.appendChild(tr);
   });
   $('#nav-pipelines').textContent=pipelines.length;
+  mountPager('#pipelinesPager', pipelines.length, pipesPage, PAGE.pipelines, p=>{ pipesPage=p; renderPipelines(); });
 }
 let pipeVerSel={};   // pipeline id → which version is being inspected on the detail page (default = current)
 // version-chaining is a MODE: the per-row checkboxes only render while it's active (click "Chain versions" to enter,
@@ -2029,6 +2077,8 @@ function openPipeline(id){
   if(chainMode && chainModePid!==id) chainMode=false;   // don't carry chain-mode across different pipelines
   go('pipelineDetail');
   const vers=(p.versions&&p.versions.length)?p.versions:[{version:p.version||1,createdAt:p.createdAt,graph:p.graph}];
+  if(verPagePid!==id){ verPage=0; verPagePid=id; }   // reset version-list page when switching pipelines
+  verPage=clampPage(verPage, vers.length, PAGE.versions);
   const selVer=(pipeVerSel[id]!=null && vers.some(v=>v.version===pipeVerSel[id]))?pipeVerSel[id]:p.version;
   const selEntry=vers.find(v=>v.version===selVer)||{version:selVer,graph:p.graph};
   // each version row: click to inspect it (graph + runs below switch), or Run it / Edit-from-it (→ new version).
@@ -2059,7 +2109,9 @@ function openPipeline(id){
           ? `<button class="btn sm ghost" id="chainCancel">Cancel</button><button class="btn sm primary" id="chainBtn" disabled>⛓ Chain selected</button>`
           : `<button class="btn sm ghost" id="chainStart">⛓ Chain versions</button>`}
       </div>
-      <table class="kv">${vers.map(verRow).join('')}</table></div>`;
+      <table class="kv">${vers.slice(verPage*PAGE.versions,(verPage+1)*PAGE.versions).map(verRow).join('')}</table>
+      <div class="pager" id="versionsPager"></div></div>`;
+  mountPager('#versionsPager', vers.length, verPage, PAGE.versions, pg=>{ verPage=pg; openPipeline(id); });
   // wire the chain controls — checkboxes only exist while chainMode is on
   if(chainMode){
     const checks=[...document.querySelectorAll('#pipelineDetailHead .ver-check')];
@@ -2283,26 +2335,38 @@ function openRun(id){
   // if the frozen graph has uploader sinks, note that PBIntra exported each result to them after the run
   const upNames=(r.graph?.nodes||[]).filter(n=>n.type==='uploader').map(n=>n.comp).filter(Boolean);
   $('#resultsCaption').innerHTML=`runner marks → id field <b style="color:var(--cyan)">${mk.idField}</b> · score field <b style="color:var(--signal-dim)">${mk.scoreField}</b> · click a row for the full entity${upNames.length?` · exported to <b style="color:var(--uploader)">${upNames.join(', ')}</b>`:''}`;
-  const tb=$('#resultsBody'); tb.innerHTML='';
-  if(!r.resultRows.length){
-    tb.innerHTML=`<tr><td colspan="4"><div class="empty" style="padding:36px"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/></svg><p>No results — this run ${r.status==='failed'?'failed before producing output':'has not produced results yet'}.</p></div></td></tr>`;
-  } else r.resultRows.forEach((row,i)=>{
-    const s=subjById(row.subj);
-    const rec=row._rec || (row._rec=recordOf(row,s));   // cache → stable record
-    // PBIntra only knows the fields the runner MARKED — the test case id and the score value; the rest is opaque until expanded
-    const tcId=getPath(rec.testCase,'$.'+mk.idField); const scVal=getPath(rec.score,'$.'+mk.scoreField);
-    const sc=Math.round((typeof scVal==='number'?scVal:0)*100);
-    const tr=el('tr');
-    tr.innerHTML=`<td class="mono" style="color:var(--fg-3)">${String(i+1).padStart(2,'0')}</td>
-      <td class="mono" style="color:var(--cyan)">${escapeHtml(String(tcId==null?'—':tcId))}</td>
-      <td>${s?escapeHtml(subjLabel(s)):'—'}</td>
-      <td>${meter(sc)}</td>`;
-    const exp=el('tr','expand-row');
-    exp.style.display='none';
-    exp.innerHTML=`<td colspan="4"><div class="expand-inner">${renderShapesFor(rec,mk)}</div></td>`;
-    tr.onclick=()=>{ const open=exp.style.display!=='none'; exp.style.display=open?'none':'table-row'; tr.style.background=open?'':'rgba(194,240,74,.04)'; if(!open) animMeters(exp); };
-    tb.appendChild(tr); tb.appendChild(exp);
-  });
+  resPage=0;   // start each opened run on the first page of results
+  // paginate the results list — re-fillable so Prev/Next don't re-run the whole run view
+  const fillResults=()=>{
+    const tb=$('#resultsBody'); tb.innerHTML='';
+    if(!r.resultRows.length){
+      tb.innerHTML=`<tr><td colspan="4"><div class="empty" style="padding:36px"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/></svg><p>No results — this run ${r.status==='failed'?'failed before producing output':'has not produced results yet'}.</p></div></td></tr>`;
+      $('#resultsPager').innerHTML=''; return;
+    }
+    resPage=clampPage(resPage, r.resultRows.length, PAGE.results);
+    const start=resPage*PAGE.results;
+    r.resultRows.slice(start, start+PAGE.results).forEach((row,idx)=>{
+      const i=start+idx;   // global row number (stable across pages)
+      const s=subjById(row.subj);
+      const rec=row._rec || (row._rec=recordOf(row,s));   // cache → stable record
+      // PBIntra only knows the fields the runner MARKED — the test case id and the score value; the rest is opaque until expanded
+      const tcId=getPath(rec.testCase,'$.'+mk.idField); const scVal=getPath(rec.score,'$.'+mk.scoreField);
+      const sc=Math.round((typeof scVal==='number'?scVal:0)*100);
+      const tr=el('tr');
+      tr.innerHTML=`<td class="mono" style="color:var(--fg-3)">${String(i+1).padStart(2,'0')}</td>
+        <td class="mono" style="color:var(--cyan)">${escapeHtml(String(tcId==null?'—':tcId))}</td>
+        <td>${s?escapeHtml(subjLabel(s)):'—'}</td>
+        <td>${meter(sc)}</td>`;
+      const exp=el('tr','expand-row');
+      exp.style.display='none';
+      exp.innerHTML=`<td colspan="4"><div class="expand-inner">${renderShapesFor(rec,mk)}</div></td>`;
+      tr.onclick=()=>{ const open=exp.style.display!=='none'; exp.style.display=open?'none':'table-row'; tr.style.background=open?'':'rgba(194,240,74,.04)'; if(!open) animMeters(exp); };
+      tb.appendChild(tr); tb.appendChild(exp);
+    });
+    mountPager('#resultsPager', r.resultRows.length, resPage, PAGE.results, p=>{ resPage=p; fillResults(); });
+    animMeters(tb);
+  };
+  fillResults();
   animMeters($('[data-page="runDetail"]'));
 }
 // switch an entity panel between its shaped and raw tab
@@ -2602,7 +2666,8 @@ function drawPreview(){
 /* ════════════════ secrets ════════════════ */
 function renderSecrets(){
   const tb=$('#secretsBody'); tb.innerHTML='';
-  secrets.forEach((s,i)=>{
+  secPage=clampPage(secPage, secrets.length, PAGE.secrets);
+  secrets.slice(secPage*PAGE.secrets, (secPage+1)*PAGE.secrets).forEach((s,i)=>{
     const tr=el('tr');
     tr.innerHTML=`<td><div style="display:flex;align-items:center;gap:9px;font-family:var(--mono);font-weight:600">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="var(--amber)" stroke-width="2"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg>${s.name}</div></td>
@@ -2617,6 +2682,7 @@ function renderSecrets(){
     tb.appendChild(tr);
   });
   $('#nav-sec').textContent=secrets.length;
+  mountPager('#secretsPager', secrets.length, secPage, PAGE.secrets, p=>{ secPage=p; renderSecrets(); });
 }
 
 /* ════════════════ settings · connections (execution platforms + container sources) ════════════════ */
