@@ -453,9 +453,11 @@ details.adv[open]>summary::before{content:"▾ "}
 .ro-canvas{position:relative;transform-origin:0 0}
 .ro-edges{position:absolute;inset:0;overflow:visible;pointer-events:none}
 .ro-edges path.live{fill:none;stroke:var(--signal);stroke-width:2.2;filter:drop-shadow(0 0 4px var(--signal-glow))}
-.ro-node{cursor:default;box-shadow:0 8px 22px rgba(0,0,0,.28)}
-.ro-node .nhead{cursor:default}
-.ro-node:hover{transform:none;border-color:var(--line-2)}
+.ro-node{cursor:pointer;box-shadow:0 8px 22px rgba(0,0,0,.28)}
+.ro-node .nhead{cursor:pointer}
+.ro-node:hover{transform:none;border-color:var(--signal-dim);box-shadow:0 8px 26px rgba(0,0,0,.34)}
+/* read-only value box for the node-config viewer (no inputs — display only) */
+.ro-val{font-size:13px;color:var(--fg);padding:9px 11px;background:var(--ink-3);border:1px solid var(--line-2);border-radius:8px;min-height:18px;line-height:1.5}
 .port.out{cursor:crosshair}
 .port.out:hover{border-color:var(--signal);background:var(--signal);box-shadow:0 0 8px var(--signal-glow)}
 .port.in.armed{border-color:var(--signal);background:var(--signal);box-shadow:0 0 10px var(--signal-glow)}
@@ -1864,6 +1866,8 @@ function mountGraph(owner, panelSel){
     const cw=mr+28, ch=mb+28; cv.style.width=cw+'px'; cv.style.height=ch+'px';
     drawRoEdges(owner.graph, cv);
     setupRoPanZoom(panel, vp, cv, cw, ch);
+    // click any node to inspect its config READ-ONLY (suppressed if the mouse was actually panning — vp.__panned)
+    cv.querySelectorAll('.ro-node').forEach(d=>{ d.addEventListener('click',()=>{ if(vp.__panned)return; const n=owner.graph.nodes.find(x=>x.id===d.dataset.id); if(n) openRoNode(n); }); });
   });
 }
 // pan/zoom for one read-only viewer (self-contained state; multiple graphs can coexist on different pages)
@@ -1874,15 +1878,57 @@ function setupRoPanZoom(panel, vp, cv, cw, ch){
     const nz=Math.max(0.3,Math.min(2,z*f)), wx=(mx-px)/z, wy=(my-py)/z; z=nz; px=mx-wx*z; py=my-wy*z; apply(); };
   const fit=()=>{ const W=vp.clientWidth,H=vp.clientHeight; z=Math.max(0.3,Math.min(1.2,Math.min(W/cw,H/ch))); px=(W-cw*z)/2; py=(H-ch*z)/2; apply(); };
   vp.addEventListener('wheel',e=>{ e.preventDefault(); zoomAt(e.deltaY<0?1.12:0.89, e.clientX, e.clientY); },{passive:false});
-  vp.addEventListener('mousedown',e=>{ if(e.button!==0||e.target.closest('.ro-zc'))return; e.preventDefault(); vp.classList.add('panning');
-    const sx=e.clientX,sy=e.clientY,ox=px,oy=py; const mv=ev=>{px=ox+(ev.clientX-sx);py=oy+(ev.clientY-sy);apply();};
-    const up=()=>{document.removeEventListener('mousemove',mv);document.removeEventListener('mouseup',up);vp.classList.remove('panning');};
+  vp.addEventListener('mousedown',e=>{ if(e.button!==0||e.target.closest('.ro-zc'))return; e.preventDefault(); vp.classList.add('panning'); vp.__panned=false;
+    const sx=e.clientX,sy=e.clientY,ox=px,oy=py; const mv=ev=>{ if(Math.abs(ev.clientX-sx)+Math.abs(ev.clientY-sy)>4) vp.__panned=true; px=ox+(ev.clientX-sx);py=oy+(ev.clientY-sy);apply();};
+    // clear __panned AFTER the ensuing click fires, so a drag suppresses the node click but a clean click still opens it
+    const up=()=>{document.removeEventListener('mousemove',mv);document.removeEventListener('mouseup',up);vp.classList.remove('panning'); setTimeout(()=>{vp.__panned=false;},0);};
     document.addEventListener('mousemove',mv);document.addEventListener('mouseup',up); });
   const q=s=>panel.querySelector(s);
   if(q('.ro-in')) q('.ro-in').onclick=()=>zoomAt(1.15);
   if(q('.ro-out')) q('.ro-out').onclick=()=>zoomAt(0.87);
   if(q('.ro-fit')) q('.ro-fit').onclick=fit;
   fit();
+}
+// READ-ONLY node inspector: clicking a node in any read-only graph (run / pipeline / docs) shows its full
+// configuration in the drawer — same info the builder's editor holds, but display-only (no inputs, no Save).
+function openRoNode(n){
+  let title, sub, body;
+  if(n.type==='pbintra'){
+    title='PBIntra hub'; sub='platform node · read-only';
+    body=`<p class="subtitle" style="margin-top:0">The runner reports every result to the <b>PBIntra</b> hub. It is always present, takes no configuration, and forwards each result to any connected uploaders.</p>`;
+  } else if(n.type==='subject'){
+    const s=subjById(n.sid);
+    title='Subject'; sub='read-only';
+    if(!s){ body='<div class="empty" style="padding:16px">subject not found</div>'; }
+    else {
+      const props=(s.properties||[]).map(p=>`<tr><td>${escapeHtml(p.key)}</td><td>${p.kind==='secret'?`<span class="atag sec">🔒 secret</span> <span class="mono" style="color:var(--fg-2)">${escapeHtml(p.value)}</span>`:`<span class="mono" style="color:var(--fg-2)">${escapeHtml(p.value)}</span>`}</td></tr>`).join('');
+      body=`
+        <div class="field"><label>Subject</label><div class="ro-val">${escapeHtml(subjLabel(s))}</div></div>
+        <div class="field"><label>Compatible connectors</label><div class="ro-val">${(s.connectors||[]).map(c=>escapeHtml(c)).join(' · ')||'—'}</div></div>
+        <div class="field"><label>Properties</label><table class="kv">${props||'<tr><td>—</td><td>no properties</td></tr>'}</table></div>`;
+    }
+  } else {
+    const comp=components.find(c=>c.name===n.comp);
+    title=n.type.charAt(0).toUpperCase()+n.type.slice(1); sub='read-only';
+    const decl=compArgs(n.comp), vals=n.argVals||{};
+    const argRows=decl.map(a=>{
+      const entered = vals[a.name]!=null && vals[a.name]!=='';
+      let cell;
+      if(entered) cell=`<span class="mono" style="color:var(--fg-2)">${escapeHtml(String(vals[a.name]))}</span>`;
+      else if(a.req==='default') cell=`${a.secret?'<span class="atag sec">🔒</span> ':''}<span class="mono" style="color:var(--fg-2)">${escapeHtml(String(a.default))}</span> <span style="color:var(--fg-3);font-size:10px">(default)</span>`;
+      else cell=`<span style="color:var(--fg-3)">${a.req==='required'?'— not set (required)':'— not set'}</span>`;
+      return `<tr><td>${escapeHtml(a.name)}</td><td>${cell}</td></tr>`;
+    }).join('');
+    const src=comp&&comp.source?` <span style="color:var(--fg-3);font-size:11px">· via ${escapeHtml(containerSourceLabel(comp.source))}</span>`:'';
+    body=`
+      <div class="field"><label>${n.type} container</label><div class="ro-val">${escapeHtml(n.comp||'—')}${comp?`<div class="mono" style="color:var(--fg-3);font-size:11px;margin-top:3px">${escapeHtml(comp.img)}${src}</div>`:''}</div></div>
+      <div class="field"><label>Run on platform</label><div class="ro-val">${escapeHtml(platformLabel(n.platform||defaultPlatform))}</div></div>
+      <div class="field"><label>Arguments</label>${decl.length?`<table class="kv">${argRows}</table>`:'<div class="empty" style="padding:10px">this component declares no arguments</div>'}</div>
+      ${(n.type==='runner'&&comp)?`<div class="field"><label>Compatible</label><div class="ro-val" style="font-size:12px;line-height:1.7">connectors: ${(comp.connectors||[]).join(', ')||'—'}<br>storages: ${(comp.storages||[]).join(', ')||'—'}<br>scorers: ${(comp.scorers||[]).join(', ')||'—'}</div></div>`:''}`;
+  }
+  $('#drawerTitle').textContent=title; $('#drawerSub').textContent=sub; $('#drawerBody').innerHTML=body;
+  $('#drawerFoot').innerHTML=''; const close=el('button','btn primary','Close'); close.onclick=closeDrawer; $('#drawerFoot').append(close);
+  overlay.classList.add('show'); drawer.classList.add('show');
 }
 function openRun(id){
   const r=runs.find(x=>x.id===id); if(!r) return;
