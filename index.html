@@ -535,6 +535,15 @@ details.adv[open]>summary::before{content:"▾ "}
 /* pagination bar under long tables (runs / pipelines / versions / results / secrets) */
 .pager{display:flex;align-items:center;justify-content:center;gap:14px;padding:12px 4px 6px}
 .pager:empty{display:none}
+/* sort/filter toolbar above a list + infinite-scroll sentinel/end marker */
+.lb-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:18px 0 2px}
+.lb-toolbar input,.lb-toolbar select{background:var(--ink-3);border:1px solid var(--line-2);border-radius:8px;color:var(--fg);font-family:var(--sans);font-size:12.5px;padding:7px 10px;outline:none}
+.lb-toolbar input:focus,.lb-toolbar select:focus{border-color:var(--signal-dim)}
+.lb-toolbar input{min-width:180px}
+.lb-toolbar .lb-lbl{font-family:var(--mono);font-size:10px;letter-spacing:.6px;text-transform:uppercase;color:var(--fg-3)}
+.lb-toolbar .sp{flex:1}
+.inf-sentinel,.inf-end{grid-column:1/-1;text-align:center;font-family:var(--mono);font-size:10.5px;color:var(--fg-3);padding:14px 0 6px}
+.inf-sentinel::before{content:"⟳ ";}
 /* Tom Select (compatible-connectors multi-select) — themed to match */
 .ts-wrapper{font-family:var(--sans)}
 .ts-control{background:var(--ink-3)!important;border:1px solid var(--line-2)!important;border-radius:9px!important;color:var(--fg)!important;box-shadow:none!important;padding:6px 8px!important;gap:5px!important}
@@ -794,13 +803,20 @@ details.adv[open]>summary::before{content:"▾ "}
       <!-- ═══════ SUBJECTS ═══════ -->
       <section class="page" data-page="subjects">
         <p class="subtitle">Subjects are the things under test — any model or agent at a remote endpoint (no LLM/agent type). A subject is its <b>name + properties</b>; PBIntra calls it through connector containers using your stored secrets.</p>
-        <div class="grid cards3" id="subjGrid" style="margin-top:18px"></div>
+        <div class="lb-toolbar" id="subjBar">
+          <input id="subjSearch" placeholder="Search subjects…">
+          <select id="subjFilterConn"><option value="">All connectors</option></select>
+          <span class="sp"></span>
+          <span class="lb-lbl">Sort</span>
+          <select id="subjSort"><option value="name">Name (A–Z)</option><option value="score">Score (high→low)</option><option value="props">Properties (most)</option></select>
+        </div>
+        <div class="grid cards3" id="subjGrid" style="margin-top:12px"></div>
       </section>
 
       <!-- ═══════ COMPONENTS ═══════ -->
       <section class="page" data-page="components">
         <p class="subtitle">Everything is a container. <b>Components</b> are the container images PBIntra orchestrates — a <span class="tag storage">storage</span> serves test data, a <span class="tag connector">connector</span> talks to subjects, a <span class="tag runner">runner</span> wires them together, a <span class="tag scorer">scorer</span> grades each response, and an optional <span class="tag uploader">uploader</span> exports results out.</p>
-        <div style="display:flex;gap:12px;align-items:center;margin:18px 0 4px">
+        <div class="lb-toolbar" style="margin:18px 0 4px">
           <div class="seg" id="compFilter">
             <button class="on" data-k="all">All</button>
             <button data-k="connector">Connector</button>
@@ -809,7 +825,10 @@ details.adv[open]>summary::before{content:"▾ "}
             <button data-k="scorer">Scorer</button>
             <button data-k="uploader">Uploader</button>
           </div>
-          <span style="font-family:var(--mono);font-size:11px;color:var(--fg-3)">component = prebuilt image hosted elsewhere · only the image URL is needed</span>
+          <input id="compSearch" placeholder="Search components…">
+          <span class="sp"></span>
+          <span class="lb-lbl">Sort</span>
+          <select id="compSort"><option value="name">Name (A–Z)</option><option value="kind">Kind</option></select>
         </div>
         <div class="grid" id="compGrid" style="grid-template-columns:repeat(2,1fr);margin-top:14px"></div>
       </section>
@@ -928,7 +947,13 @@ details.adv[open]>summary::before{content:"▾ "}
       <!-- ═══════ SECRETS ═══════ -->
       <section class="page" data-page="secrets">
         <p class="subtitle">Secrets are injected into connector/storage containers at run time — never stored in plaintext in a pipeline. Reference them by name when configuring a subject or component.</p>
-        <div class="panel" style="padding:6px 6px 2px;margin-top:18px">
+        <div class="lb-toolbar" id="secretBar">
+          <input id="secSearch" placeholder="Search secrets…">
+          <span class="sp"></span>
+          <span class="lb-lbl">Sort</span>
+          <select id="secSort"><option value="name">Name (A–Z)</option><option value="refs">References (most)</option><option value="recent">Recently used</option></select>
+        </div>
+        <div class="panel" style="padding:6px 6px 2px;margin-top:8px">
           <table class="tbl">
             <thead><tr><th>Name</th><th>Value</th><th>Used by</th><th>Last used</th><th></th></tr></thead>
             <tbody id="secretsBody"></tbody>
@@ -940,13 +965,27 @@ details.adv[open]>summary::before{content:"▾ "}
       <!-- ═══════ SETTINGS · EXECUTION PLATFORMS ═══════ -->
       <section class="page" data-page="settings">
         <p class="subtitle">PBIntra can run each container on one of several platforms. Use <b>Add platform</b> (top-right) to connect the ones you use, then pick a platform per container in the pipeline builder. Credentials here are just the access config PBIntra needs to create the job and pull the image.</p>
-        <div class="grid" id="platformGrid" style="grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;margin-top:18px"></div>
+        <div class="lb-toolbar" id="platformBar">
+          <span class="lb-lbl">Type</span>
+          <select id="platFilterType"><option value="">All types</option></select>
+          <span class="sp"></span>
+          <span class="lb-lbl">Sort</span>
+          <select id="platSort"><option value="name">Name (A–Z)</option><option value="type">Type</option></select>
+        </div>
+        <div class="grid" id="platformGrid" style="grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;margin-top:8px"></div>
       </section>
 
       <!-- ═══════ SETTINGS · CONTAINER SOURCES ═══════ -->
       <section class="page" data-page="containerSources">
         <p class="subtitle">Use <b>Add container source</b> (top-right) to connect the registries PBIntra pulls component images from. When you register a component whose image lives in a private registry, attach one of these so PBIntra has the pull credentials. Public images need none.</p>
-        <div class="grid" id="sourceGrid" style="grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;margin-top:18px"></div>
+        <div class="lb-toolbar" id="sourceBar">
+          <span class="lb-lbl">Type</span>
+          <select id="srcFilterType"><option value="">All types</option></select>
+          <span class="sp"></span>
+          <span class="lb-lbl">Sort</span>
+          <select id="srcSort"><option value="name">Name (A–Z)</option><option value="type">Type</option></select>
+        </div>
+        <div class="grid" id="sourceGrid" style="grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;margin-top:8px"></div>
       </section>
 
       <!-- ═══════ WORKSPACE · TRIGGERS ═══════ -->
@@ -1165,6 +1204,17 @@ details.adv[open]>summary::before{content:"▾ "}
       changed between them. To adopt a source change you save a NEW version (which re-snapshots).
       The only exception is a node with keep-in-sync-with-source (NOTE 16), which is never
       snapshotted and always reads the source's current definition. (Refines NOTE 13.)
+   30. LIST UX (pagination vs infinite scroll + per-list sort/filter). Long lists must not render
+      unbounded. Two patterns by list type:
+        • PAGINATED (Prev/Next page controls): Runs, Pipelines, pipeline Versions, run Results,
+          and Secrets. Secrets additionally has search + sort.
+        • INFINITE SCROLL (reveal next batch as a sentinel enters the viewport, until exhausted):
+          Platforms, Container sources, Subjects, Components.
+      Every one of these pages carries its own sort + filter appropriate to its data — Platforms/
+      Sources: filter by type + sort by name/type; Subjects: name search + connector filter + sort
+      by name/score/#properties; Components: kind filter + name search + sort by name/kind; Secrets:
+      name search + sort by name/#references/recency. (Pager/infinite controls hide when everything
+      fits on one page/batch.)
    ───────────────────────────────────────────────────────────────────────────── */
 
 const SCORE_DAYS = 14;
@@ -1938,7 +1988,15 @@ function drawChart(){
 /* ════════════════ subjects ════════════════ */
 function renderSubjects(){
   const g=$('#subjGrid'); g.innerHTML='';
-  subjects.forEach((s,i)=>{
+  $('#nav-subj').textContent=subjects.length;
+  let view=subjects.slice();
+  const q=subjSearch.trim().toLowerCase();
+  if(q) view=view.filter(s=>(subjLabel(s)+' '+s.name).toLowerCase().includes(q));
+  if(subjConn) view=view.filter(s=>(s.connectors||[]).includes(subjConn));
+  view.sort(subjSort==='score'?(a,b)=>(b.score||0)-(a.score||0)||byName(a,b)
+    :subjSort==='props'?(a,b)=>((b.properties||[]).length)-((a.properties||[]).length)||byName(a,b):byName);
+  if(!view.length){ g.innerHTML='<div class="empty" style="grid-column:1/-1;padding:30px">No subjects match your search / filter.</div>'; return; }
+  view.slice(0,subjShown).forEach((s,i)=>{
     const c=el('div','panel subj reveal'); c.style.animationDelay=(i*.05)+'s';
     const secs=secretsOf(s); const nprop=(s.properties||[]).length;
     // PBIntra is schemaless — it can't know which property is a "URL/endpoint". So show the FIRST 3 properties
@@ -1956,7 +2014,7 @@ function renderSubjects(){
     c.onclick=()=>openSubject(s.id);
     g.appendChild(c);
   });
-  $('#nav-subj').textContent=subjects.length;
+  mountInfinite('#subjGrid', view.length, subjShown, ()=>{ subjShown+=BATCH; renderSubjects(); });
   animMeters(g);
 }
 
@@ -1979,8 +2037,13 @@ const lucideName={subject:'target',connector:'cable',storage:'database',runner:'
 function drawIcons(){ if(window.lucide) lucide.createIcons(); }
 function renderComponents(){
   const g=$('#compGrid'); g.innerHTML='';
-  const list=components.filter(c=>compK==='all'||c.kind===compK);
-  list.forEach((c,i)=>{
+  $('#nav-comp').textContent=components.length;
+  let view=components.filter(c=>compK==='all'||c.kind===compK);
+  const q=compSearch.trim().toLowerCase();
+  if(q) view=view.filter(c=>(c.name+' '+(c.desc||'')).toLowerCase().includes(q));
+  view.sort(compSort==='kind'?(a,b)=>(a.kind||'').localeCompare(b.kind||'')||byName(a,b):byName);
+  if(!view.length){ g.innerHTML='<div class="empty" style="grid-column:1/-1"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg><p>No components match this filter / search.</p></div>'; return; }
+  view.slice(0,compShown).forEach((c,i)=>{
     const card=el('div','panel comp reveal'); card.style.animationDelay=(i*.04)+'s';
     const col=compColor(c.kind);
     card.innerHTML=`<div class="ci" style="color:${col}"><i data-lucide="${lucideName[c.kind]}"></i></div>
@@ -1991,14 +2054,32 @@ function renderComponents(){
     if(c.disabled) card.style.opacity='.6';   // pbintra built-in storage is a placeholder — visible but not usable yet
     g.appendChild(card);
   });
-  if(!list.length) g.innerHTML='<div class="empty" style="grid-column:1/-1"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg><p>No components in this category yet.</p></div>';
-  $('#nav-comp').textContent=components.length;
+  mountInfinite('#compGrid', view.length, compShown, ()=>{ compShown+=BATCH; renderComponents(); });
   drawIcons();
 }
 $$('#compFilter button').forEach(b=>b.onclick=()=>{
   $$('#compFilter button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
-  compK=b.dataset.k; renderComponents();
+  compK=b.dataset.k; compShown=BATCH; renderComponents();
 });
+// wire the sort/filter toolbars (populate dynamic option lists + attach change/input handlers). Called once at boot.
+function wireToolbars(){
+  const pf=$('#platFilterType'); if(pf) pf.innerHTML='<option value="">All types</option>'+PLATFORM_TYPES.map(t=>`<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('');
+  const sf=$('#srcFilterType'); if(sf) sf.innerHTML='<option value="">All types</option>'+SOURCE_TYPES.map(t=>`<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('');
+  const cf=$('#subjFilterConn'); if(cf) cf.innerHTML='<option value="">All connectors</option>'+components.filter(c=>c.kind==='connector').map(c=>`<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}</option>`).join('');
+  const on=(sel,ev,fn)=>{ const e=$(sel); if(e) e.addEventListener(ev,fn); };
+  on('#platFilterType','change',e=>{ platFilterType=e.target.value; platShown=BATCH; renderSettings(); });
+  on('#platSort','change',e=>{ platSort=e.target.value; platShown=BATCH; renderSettings(); });
+  on('#srcFilterType','change',e=>{ srcFilterType=e.target.value; srcShown=BATCH; renderContainerSources(); });
+  on('#srcSort','change',e=>{ srcSort=e.target.value; srcShown=BATCH; renderContainerSources(); });
+  on('#subjSearch','input',e=>{ subjSearch=e.target.value; subjShown=BATCH; renderSubjects(); });
+  on('#subjFilterConn','change',e=>{ subjConn=e.target.value; subjShown=BATCH; renderSubjects(); });
+  on('#subjSort','change',e=>{ subjSort=e.target.value; subjShown=BATCH; renderSubjects(); });
+  on('#compSearch','input',e=>{ compSearch=e.target.value; compShown=BATCH; renderComponents(); });
+  on('#compSort','change',e=>{ compSort=e.target.value; compShown=BATCH; renderComponents(); });
+  on('#secSearch','input',e=>{ secSearch=e.target.value; secPage=0; renderSecrets(); });
+  on('#secSort','change',e=>{ secSort=e.target.value; secPage=0; renderSecrets(); });
+}
+wireToolbars();
 
 /* ════════════════ runs ════════════════ */
 // ── pagination (long lists: runs / pipelines / versions / results / secrets) ──
@@ -2019,6 +2100,26 @@ function mountPager(sel, total, page, pageSize, goTo){
 }
 // clamp a page index into range for `total` items at `size` per page
 function clampPage(page,total,size){ const pages=Math.max(1,Math.ceil(total/size)); return Math.min(Math.max(0,page),pages-1); }
+
+// ── slice B: sort/filter + infinite scroll (platforms · sources · subjects · components; secrets = sort/filter only) ──
+const BATCH=8;   // items revealed per infinite-scroll chunk
+let platFilterType='', platSort='name', platShown=BATCH;
+let srcFilterType='',  srcSort='name',  srcShown=BATCH;
+let subjSearch='', subjConn='', subjSort='name', subjShown=BATCH;
+let compSearch='', compSort='name', compShown=BATCH;
+let secSearch='', secSort='name';   // secrets stay PAGINATED (slice A); just add filter+sort
+const byName=(a,b)=>(a.name||'').localeCompare(b.name||'');
+// "12m ago" / "1d 4h ago" / "never" → minutes-ago (recency sort); "never" = Infinity (oldest)
+function agoMinutes(s){ if(!s||s==='never') return Infinity; const m=String(s).match(/(\d+)\s*([mhd])/); if(!m) return Infinity; const n=+m[1]; return m[2]==='m'?n:m[2]==='h'?n*60:n*1440; }
+// append an infinite-scroll sentinel to a grid; when it scrolls into view (or on load if already visible), grow()
+// loads the next BATCH. Shows an "all N shown" marker once everything is rendered.
+function mountInfinite(gridSel, total, shown, grow){
+  const g=$(gridSel); if(!g) return;
+  if(shown>=total){ if(total>0){ const e=el('div','inf-end'); e.textContent='all '+total+' shown'; g.appendChild(e); } return; }
+  const s=el('div','inf-sentinel'); s.textContent='loading more…'; g.appendChild(s);
+  const io=new IntersectionObserver(es=>{ if(es.some(e=>e.isIntersecting)){ io.disconnect(); grow(); } }, {root:$('#content'), rootMargin:'200px'});
+  io.observe(s);
+}
 
 function renderRuns(){
   const tb=$('#runsBody'); tb.innerHTML='';
@@ -2666,8 +2767,15 @@ function drawPreview(){
 /* ════════════════ secrets ════════════════ */
 function renderSecrets(){
   const tb=$('#secretsBody'); tb.innerHTML='';
-  secPage=clampPage(secPage, secrets.length, PAGE.secrets);
-  secrets.slice(secPage*PAGE.secrets, (secPage+1)*PAGE.secrets).forEach((s,i)=>{
+  $('#nav-sec').textContent=secrets.length;
+  let view=secrets.slice();
+  const q=secSearch.trim().toLowerCase();
+  if(q) view=view.filter(s=>s.name.toLowerCase().includes(q));
+  view.sort(secSort==='refs'?(a,b)=>(b.used||0)-(a.used||0)||byName(a,b)
+    :secSort==='recent'?(a,b)=>agoMinutes(a.last)-agoMinutes(b.last)||byName(a,b):byName);
+  secPage=clampPage(secPage, view.length, PAGE.secrets);
+  if(!view.length){ tb.innerHTML='<tr><td colspan="5"><div class="empty" style="padding:26px">No secrets match your search.</div></td></tr>'; $('#secretsPager').innerHTML=''; return; }
+  view.slice(secPage*PAGE.secrets, (secPage+1)*PAGE.secrets).forEach((s,i)=>{
     const tr=el('tr');
     tr.innerHTML=`<td><div style="display:flex;align-items:center;gap:9px;font-family:var(--mono);font-weight:600">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="var(--amber)" stroke-width="2"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg>${s.name}</div></td>
@@ -2681,21 +2789,25 @@ function renderSecrets(){
     };
     tb.appendChild(tr);
   });
-  $('#nav-sec').textContent=secrets.length;
-  mountPager('#secretsPager', secrets.length, secPage, PAGE.secrets, p=>{ secPage=p; renderSecrets(); });
+  mountPager('#secretsPager', view.length, secPage, PAGE.secrets, p=>{ secPage=p; renderSecrets(); });
 }
 
 /* ════════════════ settings · connections (execution platforms + container sources) ════════════════ */
 // Shared connection-card grid: one card per USER-ADDED instance (empty until the user adds one via the top-right
 // "Add …" button). Added instances become selectable elsewhere (platforms → builder "Run on platform"; sources →
 // component "Container source"). `typeOf` resolves an instance's type def (icon/name/note/login/fields).
-function renderConnGrid(list, gridSel, badgeSel, drawerKind, typeOf, emptyHint){
+// `fullList` = the source array (badge count + edit/remove indices resolve against it); `opts.view` = the
+// filtered+sorted slice to actually show, `opts.shown` = how many of the view (infinite scroll), `opts.grow`/`rerender`.
+function renderConnGrid(fullList, gridSel, badgeSel, drawerKind, typeOf, emptyHint, opts){
   const g=$(gridSel); if(!g) return;
-  const rerender=()=>renderConnGrid(list, gridSel, badgeSel, drawerKind, typeOf, emptyHint);
-  const b=$(badgeSel); if(b) b.textContent=list.length;
-  if(!list.length){ g.innerHTML=`<div class="empty" style="padding:34px;grid-column:1/-1">${escapeHtml(emptyHint)}</div>`; return; }
+  const view = (opts&&opts.view) ? opts.view : fullList;
+  const shown = opts ? opts.shown : view.length;
+  const rerender = (opts&&opts.rerender) ? opts.rerender : ()=>renderConnGrid(fullList, gridSel, badgeSel, drawerKind, typeOf, emptyHint, opts);
+  const b=$(badgeSel); if(b) b.textContent=fullList.length;
+  if(!fullList.length){ g.innerHTML=`<div class="empty" style="padding:34px;grid-column:1/-1">${escapeHtml(emptyHint)}</div>`; return; }
+  if(!view.length){ g.innerHTML='<div class="empty" style="padding:34px;grid-column:1/-1">No matches — adjust the filter.</div>'; return; }
   g.innerHTML='';
-  list.forEach(p=>{
+  view.slice(0,shown).forEach(p=>{
     const t=typeOf(p.type)||{fields:[]};
     const card=el('div','panel reveal plat-card');
     const credLines = (t.fields||[]).map(f=>{ const v=(p.creds||{})[f.key]; return v?`<div class="plat-cred"><span class="pk">${escapeHtml(f.label)}</span><span class="pv mono">${escapeHtml(String(v))}</span></div>`:''; }).join('')
@@ -2714,14 +2826,34 @@ function renderConnGrid(list, gridSel, badgeSel, drawerKind, typeOf, emptyHint){
         <button class="btn ghost sm plat-disc">Remove</button>
       </div>`;
     const login=card.querySelector('.plat-login'); if(login) login.onclick=()=>toast('✓ '+p.name+' re-authenticated');
-    card.querySelector('.plat-edit').onclick=()=>openDrawer(drawerKind, list.indexOf(p));
-    card.querySelector('.plat-disc').onclick=()=>{ const i=list.indexOf(p); if(i>-1) list.splice(i,1); toast(p.name+' removed'); rerender(); };
+    card.querySelector('.plat-edit').onclick=()=>openDrawer(drawerKind, fullList.indexOf(p));
+    card.querySelector('.plat-disc').onclick=()=>{ const i=fullList.indexOf(p); if(i>-1) fullList.splice(i,1); toast(p.name+' removed'); rerender(); };
     g.appendChild(card);
   });
   drawIcons();
+  if(opts) mountInfinite(gridSel, view.length, shown, opts.grow);
 }
-function renderSettings(){ renderConnGrid(platforms, '#platformGrid', '#nav-plat', 'platform', platformType, 'No platforms yet — click “Add platform” to connect one.'); }
-function renderContainerSources(){ renderConnGrid(containerSources, '#sourceGrid', '#nav-src', 'source', sourceType, 'No container sources yet — click “Add container source” to connect a registry.'); }
+// sort a platform/source instance list by name or by type label
+function sortConn(list, sortKey, typeOf){
+  const typeLabel=x=>((typeOf(x.type)||{}).name||x.type||'');
+  return list.sort(sortKey==='type' ? (a,b)=>typeLabel(a).localeCompare(typeLabel(b))||byName(a,b) : byName);
+}
+function renderSettings(){
+  let view=platforms.slice();
+  if(platFilterType) view=view.filter(p=>p.type===platFilterType);
+  sortConn(view, platSort, platformType);
+  renderConnGrid(platforms, '#platformGrid', '#nav-plat', 'platform', platformType,
+    'No platforms yet — click “Add platform” to connect one.',
+    {view, shown:platShown, grow:()=>{ platShown+=BATCH; renderSettings(); }, rerender:renderSettings});
+}
+function renderContainerSources(){
+  let view=containerSources.slice();
+  if(srcFilterType) view=view.filter(s=>s.type===srcFilterType);
+  sortConn(view, srcSort, sourceType);
+  renderConnGrid(containerSources, '#sourceGrid', '#nav-src', 'source', sourceType,
+    'No container sources yet — click “Add container source” to connect a registry.',
+    {view, shown:srcShown, grow:()=>{ srcShown+=BATCH; renderContainerSources(); }, rerender:renderContainerSources});
+}
 
 // triggers get their own card renderer (not renderConnGrid): each card also carries an enable/disable toggle,
 // the target pipeline, and a schedule/endpoint summary. A disabled trigger dims (.trig-off).
