@@ -1008,10 +1008,11 @@ details.adv[open]>summary::before{content:"▾ "}
       aggregate as ONE config everywhere (dashboard tile, leaderboard, version score, runs
       list). Chaining is same-pipeline only — never across different pipelines (NOTE 7).
       Handy when trivial edits split otherwise-comparable runs across versions.
-   15. CONTAINER IMAGE TAGS. A component's image MUST pin a fixed tag (e.g. :1.4.0) or an
-      @sha256 digest. `:latest` is allowed but discouraged (warned): it re-points to
-      different code whenever the image is rebuilt, which breaks pipeline reusability and
-      pollutes run history (the recorded image no longer identifies the code that ran).
+   15. CONTAINER IMAGE TAGS. A component's image SHOULD pin a fixed tag (e.g. :1.4.0) or an
+      @sha256 digest — strongly recommended but NOT enforced (only warned). `:latest` (or no
+      tag) re-points to different code whenever the image is rebuilt, which breaks pipeline
+      reusability and pollutes run history (the recorded image no longer identifies the code
+      that ran). Only the image URL itself is required; the tag is a recommendation.
    16. KEEP IN SYNC WITH SOURCE (per-node, advanced). A component node may opt OUT of
       snapshotting: when its `keepSync` is set, it is NOT frozen into the version and always
       uses the component's CURRENT source definition. Consequence: that pipeline VERSION is
@@ -2575,7 +2576,7 @@ function renderDocs(){
         `<b>Versioning.</b> Every pipeline edit makes a new version; runs belong to a version and all aggregation is per version. Editing a component or subject does NOT change existing versions (they keep their snapshot) — you manually create a new version to adopt the change.`,
         `<b>Version chaining.</b> You can chain 2+ versions of the same pipeline so their runs aggregate as one config (handy after a trivial cascade-version). Same-pipeline only — never across pipelines.`,
         `<b>Runs are point-in-time snapshots.</b> A run freezes the full config of every component it used — wiring, entered arg values, AND each component's definition (arg schema, image, compatibility) as it was WHEN IT RAN. If a component later gains a new arg, older runs still show the old shape, so you always see exactly which pipeline produced those results.`,
-        `<b>Fixed image tags.</b> A component's image must pin a fixed tag (e.g. <span class="mono">:1.4.0</span>) or a digest — <span class="mono">:latest</span> is warned because it re-points to different code on rebuild, breaking reusability and run history.`,
+        `<b>Fixed image tags.</b> A component's image should pin a fixed tag (e.g. <span class="mono">:1.4.0</span>) or a digest — strongly recommended (not enforced). <span class="mono">:latest</span>/no-tag is warned because it re-points to different code on rebuild, breaking reusability and run history.`,
         `<b>Keep in sync (advanced).</b> A node can opt out of snapshotting so it always uses the component's current source definition — which makes that pipeline version <b>no longer reproducible</b> (source changes flow into it). Risky: a new required arg upstream then breaks runs until fixed by hand.`,
       ])}
       <div class="doc-note"><b>Builder implementation note.</b> This demo's pipeline builder is hand-rolled (single self-contained file, opens over <span class="mono">file://</span>). The real app should use <b>React Flow</b> — it supports typed handles on any side (top / bottom / left / right) natively, which a from-scratch canvas here provides by hand.</div>
@@ -2705,7 +2706,7 @@ function openDrawer(kind, editIdx){
           ${[['connector','Connector'],['storage','Storage'],['runner','Runner'],['scorer','Scorer'],['uploader','Uploader']].map(o=>`<label><input type="radio" name="ck" value="${o[0]}" ${K===o[0]?'checked':''}><span>${o[1]}</span></label>`).join('')}
         </div></div>
       <div class="field"><label>Container image URL</label><input id="f_img" placeholder="ghcr.io/org/image:1.4.0" value="${ec?escapeHtml(ec.img):''}">
-        <div class="hint">A prebuilt image hosted somewhere — point PBIntra at its URL. A <b>fixed tag is required</b> (e.g. <span class="mono">:1.4.0</span>).</div>
+        <div class="hint">A prebuilt image hosted somewhere — point PBIntra at its URL. A <b>fixed tag is strongly recommended</b> (e.g. <span class="mono">:1.4.0</span>) for reproducible pipelines.</div>
         <div class="hint" id="imgWarn" style="margin-top:6px"></div></div>
       <div class="field"><label>Container source <span style="color:var(--fg-3);font-weight:400">· optional</span></label>
         <select id="f_source"><option value="">Public / none</option>${connectedSources().map(s=>`<option value="${s.id}" ${ec&&ec.source===s.id?'selected':''}>${escapeHtml(s.name)}</option>`).join('')}</select>
@@ -2732,8 +2733,8 @@ function openDrawer(kind, editIdx){
       // live image-tag guidance: no tag = required error; :latest = discouraged; fixed tag / digest = ok
       const imgWarn=()=>{ const v=$('#f_img').value.trim(); const w=$('#imgWarn'); if(!w) return;
         if(!v){ w.innerHTML=''; return; }
-        if(!imagePinned(v)){ w.innerHTML='<span style="color:var(--red)">⚠ Add a fixed tag (e.g. <span class="mono">:1.4.0</span>) — required.</span>'; }
-        else if(imageIsLatest(v)){ w.innerHTML='<span style="color:var(--amber)">⚠ <b>:latest</b> re-points to different code when the image is rebuilt — it hurts pipeline reusability and pollutes run history. Prefer a fixed tag.</span>'; }
+        if(!imagePinned(v)){ w.innerHTML='<span style="color:var(--amber)">⚠ No tag — a fixed tag (e.g. <span class="mono">:1.4.0</span>) is <b>strongly recommended</b> for reproducible pipelines.</span>'; }
+        else if(imageIsLatest(v)){ w.innerHTML='<span style="color:var(--amber)">⚠ <b>:latest</b> re-points to different code when the image is rebuilt — it hurts pipeline reusability and pollutes run history. A fixed tag is <b>strongly recommended</b>.</span>'; }
         else { w.innerHTML='<span style="color:var(--signal)">✓ fixed '+(/@sha256:/.test(v)?'digest':'tag')+' — reproducible.</span>'; } };
       $('#f_img').addEventListener('input',imgWarn); imgWarn();
       // a runner is outbound-only (nothing calls it) → no API schema to upload; it declares compatible components instead
@@ -2769,10 +2770,10 @@ function openDrawer(kind, editIdx){
       const name=$('#f_name').value.trim().replace(/[^A-Za-z0-9_-]/g,'')||'untitled-component';
       const kind2=document.querySelector('input[name=ck]:checked').value;
       const img=$('#f_img').value.trim();
-      // a fixed tag (or @sha256 digest) is REQUIRED so runs are reproducible; :latest is allowed but warned
-      if(!img){ toast('⚠ Enter a container image URL (with a fixed tag)'); return false; }
-      if(!imagePinned(img)){ toast('⚠ Container image needs a fixed tag — e.g. :1.4.0'); return false; }
-      if(imageIsLatest(img)) toast('⚠ Saved with :latest — prefer a fixed tag for reproducible runs & clean history');
+      // image URL is required; a fixed tag is NOT mandatory but STRONGLY recommended (warn, don't block) — REAL-IMPL NOTE 15
+      if(!img){ toast('⚠ Enter a container image URL'); return false; }
+      if(!imagePinned(img)) toast('⚠ No image tag — a fixed tag (e.g. :1.4.0) is strongly recommended for reproducible pipelines');
+      else if(imageIsLatest(img)) toast('⚠ :latest is not reproducible — a fixed tag is strongly recommended');
       const desc=$('#f_desc').value.trim();
       let obj;
       if(kind2==='runner'){
