@@ -975,9 +975,9 @@ details.adv[open]>summary::before{content:"▾ "}
    8. PIPELINES ARE VERSIONED. Each edit — even the smallest — creates a NEW pipeline
       VERSION, listed under the same pipeline. Conceptually every version is its own
       pipeline; runs belong to a specific version and all aggregations are per-version.
-      CASCADE: editing a component OR subject that a pipeline uses ALSO opens a new
-      version of every pipeline using it — because the point-in-time config it pins
-      (see NOTE 13) has changed.
+      Editing a component or subject does NOT auto-touch existing versions: each version
+      keeps the snapshot it pinned at creation (NOTE 13). To adopt a changed component/
+      subject the user MANUALLY creates a new version (edit the pipeline → Save).
    9. SUBJECT METADATA IS REPORTED TO THE RUNNER. A subject's metadata (owner, tier,
       region…) is NOT part of identity (see 1), but it IS handed to the runner at run
       time so the runner can use it if it needs to (e.g. branch on tier, tag results).
@@ -1218,7 +1218,7 @@ pipelines.forEach(p=>{ (p.versions||[]).forEach(v=>{ if(!v.graph) v.graph=p.grap
 // POINT-IN-TIME SNAPSHOT (REAL-IMPL NOTE 13): a version/run must show the component & subject definitions AS THEY
 // WERE when that version was created — NOT their current definitions. So every version graph node carries a deep
 // snapshot of its component (args/img/source/compat) and subject (properties/connectors); read-only viewers use it.
-// (Refreshed whenever a NEW version is created — savePipeline / bumpPipelinesUsing — capturing the then-current defs.)
+// (Refreshed whenever a NEW version is created — savePipeline — capturing the then-current defs.)
 function snapshotNode(n){
   if(n.type==='subject'){ const s=subjects.find(x=>x.id===n.sid); if(s) n.subjSnap={name:s.name,displayName:s.displayName,connectors:[...(s.connectors||[])],properties:JSON.parse(JSON.stringify(s.properties||[])),meta:JSON.parse(JSON.stringify(s.meta||[]))}; return; }
   if(n.type==='pbintra'||!n.comp) return;
@@ -2553,7 +2553,7 @@ function renderDocs(){
         `<b>Configurable args.</b> Each component declares its own args (required / optional / optional-with-default; a default may be a secret); the user fills them per node when building a pipeline.`,
         `<b>Multi-platform execution.</b> A container can run on Docker, Cloud Run, Lambda, Cloudflare Workers or Supabase Functions — chosen per container. Platform credentials live in Settings and are NOT secrets.`,
         `<b>Container sources.</b> Private images are pulled via a connected registry (Docker Hub, GCP AR, ECR, GHCR, ACR, custom) attached to the component; a source's credentials are registry access config, not the app's secrets.`,
-        `<b>Versioning.</b> Every pipeline edit makes a new version; runs belong to a version and all aggregation is per version. Editing a component or subject a pipeline <b>uses</b> also opens a new version of every pipeline using it (its pinned config changed).`,
+        `<b>Versioning.</b> Every pipeline edit makes a new version; runs belong to a version and all aggregation is per version. Editing a component or subject does NOT change existing versions (they keep their snapshot) — you manually create a new version to adopt the change.`,
         `<b>Version chaining.</b> You can chain 2+ versions of the same pipeline so their runs aggregate as one config (handy after a trivial cascade-version). Same-pipeline only — never across pipelines.`,
         `<b>Runs are point-in-time snapshots.</b> A run freezes the full config of every component it used — wiring, entered arg values, AND each component's definition (arg schema, image, compatibility) as it was WHEN IT RAN. If a component later gains a new arg, older runs still show the old shape, so you always see exactly which pipeline produced those results.`,
       ])}
@@ -2658,9 +2658,8 @@ function openDrawer(kind, editIdx){
         es.name=name; es.displayName=displayName||undefined; es.connectors=connectors; es.properties=properties; es.meta=meta;
         renderSubjects();
         if($('[data-page="subjectDetail"]').classList.contains('active')) openSubject(es.id);
-        // editing a used subject also pins a new point-in-time config → bump every pipeline that uses it
-        const bumped=bumpPipelinesUsing(nd=>nd.type==='subject'&&nd.sid===es.id, 'subject “'+name+'” updated');
-        toast('Subject “'+name+'” updated'+(bumped?` · ${bumped} pipeline${bumped===1?'':'s'} → new version`:''));
+        // like components: editing a subject does NOT touch existing versions — user re-versions manually to adopt it
+        toast('Subject “'+name+'” updated');
       } else {
         const id='s'+Math.random().toString(36).slice(2,6);
         const base=70+Math.floor(Math.random()*15);
@@ -2759,12 +2758,9 @@ function openDrawer(kind, editIdx){
       if(argsClean.length) obj.args=argsClean;   // configurable-arg schema (REAL-IMPL NOTE 10)
       const source=$('#f_source')?$('#f_source').value:''; if(source) obj.source=source;   // optional private-registry source (REAL-IMPL NOTE 12)
       if(desc) obj.desc=desc;   // optional human description, shown on the detail page
-      if(ec){ components[editIdx]=obj; renderComponents(); if($('[data-page="componentDetail"]').classList.contains('active')) openComponent(editIdx);
-        // editing a used component pins a new point-in-time config → bump every pipeline that uses it (by its pre-edit name)
-        const bumped=bumpPipelinesUsing(nd=>nd.comp===ec.name, 'component “'+name+'” updated');
-        toast('Component “'+name+'” updated'+(bumped?` · ${bumped} pipeline${bumped===1?'':'s'} → new version`:''));
-        if(bumped && $('[data-page="pipelineDetail"]').classList.contains('active')) renderPipelines();
-      }
+      // NOTE: editing a component does NOT touch existing pipeline versions — each version keeps the snapshot it
+      // pinned when created (REAL-IMPL NOTE 13). The user manually creates a new version to adopt the change.
+      if(ec){ components[editIdx]=obj; renderComponents(); if($('[data-page="componentDetail"]').classList.contains('active')) openComponent(editIdx); toast('Component “'+name+'” updated'); }
       else { const at=components.findIndex(c=>!c.builtin); components.splice(at<0?components.length:at,0,obj); renderComponents(); toast('Component “'+name+'” registered'); }
     };
   }
@@ -3213,21 +3209,6 @@ $('#builderCancel').onclick=()=>go('pipelines');
 
 // Builder SAVES a named pipeline (no run here). Runs are launched from the Pipelines page/detail.
 // Saving an existing pipeline ALWAYS creates a NEW version (every edit = new version); a brand-new pipeline starts at v1.
-// When a component or subject USED by a pipeline's current graph changes, every pipeline using it opens a NEW
-// version — because a version pins the point-in-time config (REAL-IMPL NOTES 8 & 13). Returns #pipelines bumped.
-function bumpPipelinesUsing(usesFn, note){
-  let n=0;
-  pipelines.forEach(p=>{
-    if(!(p.graph && p.graph.nodes && p.graph.nodes.some(usesFn))) return;
-    const newVer=(p.version||1)+1;
-    const graph={nodes:(p.graph.nodes||[]).map(x=>({...x})), edges:(p.graph.edges||[]).map(e=>[...e])};
-    snapshotGraph(graph);   // NEW version pins the NOW-current defs (incl. the change that triggered the bump)
-    p.version=newVer; p.graph=graph;
-    p.versions=p.versions||[]; p.versions.unshift({version:newVer, createdAt:'just now', note, graph});
-    n++;
-  });
-  return n;
-}
 function savePipeline(){
   const name=$('#pipelineName').value.trim()||'Untitled pipeline';
   const graph={nodes:nodes.map(n=>({...n})), edges:edges.map(e=>[...e])};   // snapshot the built graph
