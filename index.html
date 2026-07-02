@@ -447,6 +447,15 @@ details.adv[open]>summary::before{content:"▾ "}
 .hm-body p{margin:0 0 12px}
 .hm-body b{color:var(--fg)}
 .hm-body code{font-family:var(--mono);font-size:12px;color:var(--signal-dim);background:var(--ink-3);padding:1px 5px;border-radius:4px}
+/* confirm dialog — sits ABOVE the drawer (z 80 > drawer 50) so a Save can ask before applying */
+.cfm-backdrop{position:fixed;inset:0;background:rgba(4,6,5,.5);backdrop-filter:blur(2px);opacity:0;pointer-events:none;transition:.2s;z-index:70}
+.cfm-backdrop.show{opacity:1;pointer-events:auto}
+.cfm-modal{position:fixed;top:50%;left:50%;transform:translate(-50%,-46%) scale(.98);width:520px;max-width:92vw;max-height:82vh;overflow:auto;background:linear-gradient(180deg,var(--card),var(--ink-2));border:1px solid var(--line-2);border-radius:16px;box-shadow:0 30px 80px rgba(0,0,0,.55);z-index:80;opacity:0;pointer-events:none;transition:.22s}
+.cfm-modal.show{opacity:1;pointer-events:auto;transform:translate(-50%,-50%) scale(1)}
+.cfm-foot{padding:16px 24px 22px;display:flex;gap:10px;justify-content:flex-end}
+.cfm-warn{border-left:3px solid var(--amber);background:rgba(245,177,61,.06);padding:10px 12px;border-radius:0 8px 8px 0;margin:0 0 13px}
+.cfm-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.cfm-chip{font-family:var(--mono);font-size:11px;background:var(--ink-3);border:1px solid var(--line-2);border-radius:20px;padding:3px 10px;color:var(--fg-2)}
 
 /* ─────────── editable builder: ports + edges + node delete ─────────── */
 #edges{pointer-events:auto}
@@ -644,6 +653,12 @@ details.adv[open]>summary::before{content:"▾ "}
 .col-edit .prop-del{padding:7px 0;width:26px;flex:none}
 .add-col{align-self:stretch;border:1px dashed var(--line-2);background:transparent;color:var(--signal-dim);font-family:var(--mono);font-size:11px;border-radius:8px;padding:0 12px;cursor:pointer;min-width:54px}
 .add-col:hover{color:var(--signal);border-color:var(--signal-dim)}
+/* per-field drag handle → move a column between rows / reorder within a row */
+.chandle{cursor:grab;color:var(--fg-3);user-select:none;font-size:13px;line-height:1;flex:none;padding:0 1px}
+.chandle:active{cursor:grabbing}
+.col-edit.col-dragging{opacity:.4}
+.col-edit.col-drop{outline:2px dashed var(--pbintra);outline-offset:3px}
+.cols.cols-drop{outline:2px dashed var(--signal-dim);outline-offset:3px;border-radius:8px}
 /* ─────────── docs page ─────────── */
 .doc-hero{background:linear-gradient(135deg,rgba(90,163,0,.10),transparent 55%),linear-gradient(180deg,var(--card),var(--ink-2));border:1px solid var(--line-2)}
 .doc-lede{font-size:15px;line-height:1.75;color:var(--fg-2);max-width:780px}
@@ -952,6 +967,14 @@ details.adv[open]>summary::before{content:"▾ "}
   <div class="hm-body" id="helpBody"></div>
 </div>
 
+<!-- generic confirm dialog (used e.g. when saving a component that pipelines already use) -->
+<div class="cfm-backdrop" id="cfmBackdrop"></div>
+<div class="cfm-modal" id="cfmModal">
+  <div class="hm-head"><div class="hm-title" id="cfmTitle">Confirm</div><div class="x" id="cfmClose">✕</div></div>
+  <div class="hm-body" id="cfmBody"></div>
+  <div class="cfm-foot" id="cfmFoot"></div>
+</div>
+
 <div class="toast-wrap" id="toasts"></div>
 
 <script>
@@ -1065,6 +1088,14 @@ details.adv[open]>summary::before{content:"▾ "}
       overlapping schedules can't spawn duplicate runs. (Same behaviour as renisa's triggers.)
       Firing a trigger creates a normal Run of that pipeline (same as the Run button), so all
       run machinery (token, snapshot, reporting) is unchanged — triggers are just the launcher.
+   21. EDITING AN IN-USE COMPONENT. When a user saves an edit to a component that is already
+      referenced by ≥1 pipeline AND an EXECUTION-affecting field changed (anything except name &
+      description — img, source, args, or a runner's connectors/storages/scorers), the UI must
+      show a confirm dialog before applying. The dialog states: existing runs are unaffected
+      (each froze the component at launch); future runs can drift (keep-in-sync nodes adopt the
+      new config next run, pinned nodes only on a new version — NOTE 16); this hurts a pipeline's
+      reproducibility; and for a behaviour-affecting change the pipelines using it should cut a
+      NEW version before their next run. Name/description-only edits skip the warning.
    ───────────────────────────────────────────────────────────────────────────── */
 
 const SCORE_DAYS = 14;
@@ -1431,6 +1462,25 @@ const $$ = s=>[...document.querySelectorAll(s)];
 const el = (t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;};
 const subjById = id => subjects.find(s=>s.id===id);
 const pipelineById = id => pipelines.find(p=>p.id===id);
+// pipelines that reference a component by name (across the current graph + any version graph) — for the "editing a
+// component that pipelines already use" Save warning. Returns distinct pipeline names.
+function pipelinesUsingComponent(name){
+  const used=[];
+  pipelines.forEach(p=>{
+    const graphs=[p.graph, ...(p.versions||[]).map(v=>v.graph)].filter(Boolean);
+    if(graphs.some(g=>(g.nodes||[]).some(n=>n.comp===name))) used.push(p.name);
+  });
+  return used;
+}
+// signature of the EXECUTION-affecting fields of a component (everything except name & description). Used to decide
+// whether a component edit actually changes how it runs — if only name/desc changed, no reproducibility warning.
+function componentExecSig(c){
+  return JSON.stringify({
+    kind:c.kind, img:c.img||'', source:c.source||'',
+    args:(c.args||[]).map(a=>({name:a.name,type:a.type,req:a.req,default:a.default,secret:!!a.secret})),
+    connectors:c.connectors||null, storages:c.storages||null, scorers:c.scorers||null,
+  });
+}
 // shared renderer: a list of component names as clickable links to their detail (lowercase, per-kind colour).
 // Used by BOTH the runner detail (Compatible connectors/storages/scorers) AND the subject detail (Compatible connectors).
 function compLinkList(arr, k){
@@ -2385,7 +2435,7 @@ function renderShapeEditor(){
         <div id="rowsWrap"></div>
         <datalist id="jpList"></datalist>
         <span class="add-prop" id="addRow">+ add row</span>
-        <div style="font-family:var(--mono);font-size:10px;color:var(--fg-3);margin-top:10px">⠿ drag a row to reorder · “+ col” adds a column to a row</div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--fg-3);margin-top:10px">⠿ drag a <b>row</b> handle to reorder rows · drag a <b>field</b> handle onto another column (insert before) or an empty spot in any row (append) to move it · “+ col” adds a column</div>
       </div>
       <div class="panel reveal">
         <div style="font-family:var(--disp);font-weight:700;font-size:14px;margin-bottom:6px">Live preview</div>
@@ -2400,9 +2450,24 @@ function renderShapeEditor(){
   drawPreview();
 }
 let rowDrag=null;
+let colDrag=null;   // {r,c} of the field (column) currently being dragged
+// move a field between rows/columns. `to` = {r, c} to insert BEFORE that column, or {r, c:'end'} to append.
+// Works on the array REFERENCES (not indices) so removing an emptied source row can't shift the target.
+function moveField(from,to){
+  const sh=curShape();
+  const srcRow=sh.rows[from.r], dstRow=sh.rows[to.r];
+  if(!srcRow||!dstRow) return;
+  const f=srcRow[from.c]; if(!f) return;
+  srcRow.splice(from.c,1);
+  let ci=(to.c==='end')?dstRow.length:to.c;
+  if(srcRow===dstRow && from.c<ci) ci--;   // same-row removal shifted the insert index left by one
+  dstRow.splice(ci,0,f);
+  if(!srcRow.length){ const idx=sh.rows.indexOf(srcRow); if(idx>-1) sh.rows.splice(idx,1); }
+  renderShapeEditor();
+}
 function colEditHtml(f,ri,ci){
   return `<div class="col-edit" data-r="${ri}" data-c="${ci}">
-    <div class="col-top"><input class="fpath" value="${f.path}" placeholder="$.path" list="jpList" spellcheck="false"><div class="prop-del" title="remove column">✕</div></div>
+    <div class="col-top"><span class="chandle" draggable="true" title="drag to move this field to another row / column">⠿</span><input class="fpath" value="${f.path}" placeholder="$.path" list="jpList" spellcheck="false"><div class="prop-del" title="remove column">✕</div></div>
     <div class="jp-resolve"></div>
     <select class="fel">${EL_TYPES.map(t=>`<option ${t===f.el?'selected':''}>${t}</option>`).join('')}</select>
     <div class="fopts">${optInputsHtml(f)}</div>
@@ -2424,8 +2489,21 @@ function rowBlockEl(cols,ri){
     // per-type option inputs (label, unit, colour, format, size…) → write to f.opts, live-update the preview
     cell.querySelectorAll('.fopt').forEach(inp=>{ inp.oninput=inp.onchange=()=>{ f.opts=f.opts||{}; const v=inp.value; if(v==='') delete f.opts[inp.dataset.k]; else f.opts[inp.dataset.k]=v; drawPreview(); }; });
     cell.querySelector('.prop-del').onclick=()=>{ sh.rows[ri].splice(ci,1); if(!sh.rows[ri].length) sh.rows.splice(ri,1); renderShapeEditor(); };
+    // field-level drag: pick up this column by its ⠿ handle, drop onto another column (insert before) or an
+    // empty spot in any row's .cols (append) — lets fields move across rows and reorder within a row.
+    const chandle=cell.querySelector('.chandle');
+    chandle.addEventListener('dragstart',e=>{ colDrag={r:ri,c:ci}; cell.classList.add('col-dragging'); e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain','col'); e.stopPropagation(); });
+    chandle.addEventListener('dragend',()=>{ colDrag=null; document.querySelectorAll('.col-edit').forEach(c=>c.classList.remove('col-dragging','col-drop')); document.querySelectorAll('.cols').forEach(c=>c.classList.remove('cols-drop')); });
+    cell.addEventListener('dragover',e=>{ if(!colDrag)return; e.preventDefault(); e.stopPropagation(); cell.classList.add('col-drop'); });
+    cell.addEventListener('dragleave',()=>cell.classList.remove('col-drop'));
+    cell.addEventListener('drop',e=>{ if(!colDrag)return; e.preventDefault(); e.stopPropagation(); cell.classList.remove('col-drop'); const from=colDrag; colDrag=null; moveField(from,{r:ri,c:ci}); });
   });
   block.querySelector('.add-col').onclick=()=>{ sh.rows[ri].push({path:'$.',el:'text'}); renderShapeEditor(); };
+  // dropping onto empty space in this row's column strip (not on a specific column) appends the field to this row
+  const colsWrap=block.querySelector('.cols');
+  colsWrap.addEventListener('dragover',e=>{ if(!colDrag)return; e.preventDefault(); colsWrap.classList.add('cols-drop'); });
+  colsWrap.addEventListener('dragleave',e=>{ if(e.target===colsWrap) colsWrap.classList.remove('cols-drop'); });
+  colsWrap.addEventListener('drop',e=>{ if(!colDrag)return; e.preventDefault(); colsWrap.classList.remove('cols-drop'); const from=colDrag; colDrag=null; moveField(from,{r:+block.dataset.r,c:'end'}); });
   const h=block.querySelector('.fhandle');
   h.addEventListener('dragstart',e=>{ rowDrag=ri; block.classList.add('dragging'); e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain',String(ri)); });
   h.addEventListener('dragend',()=>{ rowDrag=null; block.classList.remove('dragging'); document.querySelectorAll('.row-block').forEach(b=>b.classList.remove('drop-target')); });
@@ -2682,7 +2760,7 @@ function renderDocs(){
 
     ${H('Shapes & results','decide how each structure renders')}
     <div class="panel reveal">
-      <p class="subtitle" style="margin-top:0">Every result is <span class="mono">{ testCase, response, score }</span> as free-form JSON. A <b>shape</b> is a rendering rule for one distinct structure (unique by its full recursive field set): map <b>JSONPath</b> fields to UI elements — text, badge, score-meter, audio… Each field can carry <b>per-type options</b>: a <b>label</b>, plus type-specific settings (number → unit / decimals, badge → colour, date → format, image → size). If a shape is defined the result renders <b>Shaped</b> (Shaped / Raw toggle + <b>edit shape ↗</b>); otherwise it falls back to <b>Raw</b>. Long values collapse behind <b>read more</b>.</p>
+      <p class="subtitle" style="margin-top:0">Every result is <span class="mono">{ testCase, response, score }</span> as free-form JSON. A <b>shape</b> is a rendering rule for one distinct structure (unique by its full recursive field set): map <b>JSONPath</b> fields to UI elements — text, badge, score-meter, audio… Each field can carry <b>per-type options</b>: a <b>label</b>, plus type-specific settings (number → unit / decimals, badge → colour, date → format, image → size). If a shape is defined the result renders <b>Shaped</b> (Shaped / Raw toggle + <b>edit shape ↗</b>); otherwise it falls back to <b>Raw</b>. Long values collapse behind <b>read more</b>. In the editor you lay fields out in <b>rows &amp; columns</b> and can <b>drag a field's ⠿ handle</b> to move it into another row or reorder it within one (drag a row's handle to reorder whole rows).</p>
       <div class="doc-eg"><span class="eg-lbl">a shaped score object — with labels, a unit and a badge colour</span>
         <div class="pv-row"><div class="pv-field"><div class="lab">$.score <span class="mark-badge score">score field</span></div>${renderEl('score-meter',0.92,{label:'score'})}</div><div class="pv-field"><div class="lab">$.latency_ms</div>${renderEl('number',740,{label:'latency',unit:'ms'})}</div><div class="pv-field"><div class="lab">$.rubric</div>${renderEl('badge','exact-match+judge',{label:'rubric',color:'pink'})}</div></div>
       </div>
@@ -2732,6 +2810,20 @@ $('#helpClose').onclick=closeHelp;
 function closeHelp(){ overlay.classList.remove('show'); $('#helpModal').classList.remove('show'); }
 function helpBtn(topic){ return `<span class="help-q" onclick="help('${topic}')" title="What is this?">?</span>`; }
 function help(topic){ const h=HELP[topic]||{t:'Info',b:'<p>No details yet.</p>'}; $('#helpTitle').textContent=h.t; $('#helpBody').innerHTML=h.b; overlay.classList.add('show'); $('#helpModal').classList.add('show'); }
+// generic confirm — resolves via callbacks. Sits above the drawer so a Save can gate on it.
+function confirmDialog(opts){
+  const bd=$('#cfmBackdrop'), md=$('#cfmModal');
+  $('#cfmTitle').textContent=opts.title||'Confirm';
+  $('#cfmBody').innerHTML=opts.bodyHtml||'';
+  const close=()=>{ bd.classList.remove('show'); md.classList.remove('show'); };
+  const cancel=()=>{ close(); if(opts.onCancel) opts.onCancel(); };
+  const foot=$('#cfmFoot'); foot.innerHTML='';
+  const c=el('button','btn ghost',opts.cancelLabel||'Cancel'); c.onclick=cancel;
+  const ok=el('button','btn primary',opts.confirmLabel||'Confirm'); ok.onclick=()=>{ close(); if(opts.onConfirm) opts.onConfirm(); };
+  foot.append(c,ok);
+  $('#cfmClose').onclick=cancel; bd.onclick=cancel;
+  bd.classList.add('show'); md.classList.add('show');
+}
 const HELP={
   dashboard:{t:'Dashboard',b:`<p><b>What.</b> The at-a-glance health view of your backtesting workspace.</p><p><b>How.</b> It aggregates every result across runs — average quality, per-subject leaderboard, a quality-over-time chart, and recent runs — all computed from the same in-memory data the other pages write to.</p><p><b>Why.</b> Backtesting is about tracking quality <i>day by day</i>; this is where regressions and improvements surface first.</p>`},
   subjects:{t:'Subjects',b:`<p><b>What.</b> The things under test — any model or agent at a remote endpoint. There is <b>no LLM/agent type</b>: a subject is just a <b>name + properties</b>.</p><p><b>How.</b> Properties (base_url, model, api_key, …) are each bound to a stored <b>secret</b> or a literal value. A subject also declares which <b>connector</b> containers it is compatible with — it can wire to any of them.</p><p><b>Why.</b> Subjects are what you score. Free-form property bags (not fixed fields, no type) let any model or agent be tested the same way. Identity = name + properties (metadata excluded).</p>`},
@@ -2932,8 +3024,30 @@ function openDrawer(kind, editIdx){
       if(desc) obj.desc=desc;   // optional human description, shown on the detail page
       // NOTE: editing a component does NOT touch existing pipeline versions — each version keeps the snapshot it
       // pinned when created (REAL-IMPL NOTE 13). The user manually creates a new version to adopt the change.
-      if(ec){ components[editIdx]=obj; renderComponents(); if($('[data-page="componentDetail"]').classList.contains('active')) openComponent(editIdx); toast('Component “'+name+'” updated'); }
-      else { const at=components.findIndex(c=>!c.builtin); components.splice(at<0?components.length:at,0,obj); renderComponents(); toast('Component “'+name+'” registered'); }
+      const doSave=()=>{
+        if(ec){ components[editIdx]=obj; renderComponents(); if($('[data-page="componentDetail"]').classList.contains('active')) openComponent(editIdx); toast('Component “'+name+'” updated'); }
+        else { const at=components.findIndex(c=>!c.builtin); components.splice(at<0?components.length:at,0,obj); renderComponents(); toast('Component “'+name+'” registered'); }
+      };
+      // Editing a component that pipelines already USE + an execution-affecting field (anything but name/desc)
+      // changed → warn before applying (REAL-IMPL NOTE 21). Existing runs are frozen; the concern is future runs
+      // + reproducibility. Recommend cutting a new pipeline version to capture a behaviour-affecting change.
+      if(ec && componentExecSig(ec)!==componentExecSig(obj)){
+        const users=pipelinesUsingComponent(ec.name);
+        if(users.length){
+          confirmDialog({
+            title:'Update a component that pipelines use?',
+            confirmLabel:'Update component',
+            bodyHtml:`<div class="cfm-warn">Changing how <b>${escapeHtml(ec.name)}</b> runs (not just its name/description) affects pipelines that already use it.</div>
+              <p><b>Existing runs stay exactly as they were</b> — every run froze this component at launch, so past results are safe.</p>
+              <p>But <b>future runs</b> can drift: a pipeline node set to <b>keep in sync with source</b> will pick up this new config on its next run, while pinned nodes only adopt it when you cut a new version. Either way it can make a pipeline's <b>reproducibility hard to track</b>.</p>
+              <p>If this is a <b>behaviour-affecting</b> change, the pipelines below should <b>create a new version</b> before their next run so the change is captured intentionally:</p>
+              <div class="cfm-list">${users.map(u=>`<span class="cfm-chip">${escapeHtml(u)}</span>`).join('')}</div>`,
+            onConfirm:()=>{ doSave(); closeDrawer(); },
+          });
+          return false;   // keep the drawer open; the dialog drives the apply/close
+        }
+      }
+      doSave();
     };
   }
   if(kind==='platform' || kind==='source'){
