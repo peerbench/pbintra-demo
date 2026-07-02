@@ -1075,9 +1075,11 @@ details.adv[open]>summary::before{content:"▾ "}
       knows to resolve them through the PBIntra API (with its run token, NOTE 3) before use. e.g.
       SUBJECTS_JSON={"claude-sonnet-4-5":{"base_url":"openrouter.ai/api/v1","model":"…",
       "api_key:SECRET":"","temperature":"0"}}
-   20. TRIGGERS. A trigger launches a PIPELINE automatically — always the pipeline's LATEST
-      version at fire time (it references a pipeline, not a frozen version). Each trigger has an
-      `enabled` flag (disable = pause without deleting) and can be removed. Two types:
+   20. TRIGGERS. A trigger launches a PIPELINE automatically. By DEFAULT it runs the pipeline's
+      LATEST version at fire time, but the trigger MAY pin a SPECIFIC version instead (config field
+      `ver` = 'latest' | a version number) — pinning keeps the trigger reproducible even as new
+      versions are saved. Each trigger has an `enabled` flag (disable = pause without deleting) and
+      can be removed. Two types:
         • TIME-BASED — three schedule modes: `interval` (every N minutes/hours/days),
           `once` (a single fixed date/time; self-disables after firing), and `recurring`
           (a standard 5-field cron expression). The scheduler is server-side.
@@ -1476,9 +1478,9 @@ const TRIGGER_TYPES = [
 ];
 const triggerType=id=>TRIGGER_TYPES.find(t=>t.id===id);
 let triggers = [
-  {id:'tg1', type:'time',    name:'include_de nightly',   pipelineId:'p1', enabled:true,  debounce:30,  schedule:{mode:'recurring', cron:'0 2 * * *'}},
-  {id:'tg2', type:'time',    name:'MMLU sweep every 6h',  pipelineId:'p3', enabled:true,  debounce:30,  schedule:{mode:'interval', every:6, unit:'hours'}},
-  {id:'tg3', type:'webhook', name:'CI post-deploy check', pipelineId:'p2', enabled:false, debounce:120, hook:{path:'t/2f9c1a', secret:'WEBHOOK_SIGNING_SECRET'}},
+  {id:'tg1', type:'time',    name:'include_de nightly',   pipelineId:'p1', ver:'latest', enabled:true,  debounce:30,  schedule:{mode:'recurring', cron:'0 2 * * *'}},
+  {id:'tg2', type:'time',    name:'MMLU sweep every 6h',  pipelineId:'p3', ver:2,        enabled:true,  debounce:30,  schedule:{mode:'interval', every:6, unit:'hours'}},
+  {id:'tg3', type:'webhook', name:'CI post-deploy check', pipelineId:'p2', ver:'latest', enabled:false, debounce:120, hook:{path:'t/2f9c1a', secret:'WEBHOOK_SIGNING_SECRET'}},
 ];
 let trigSeq=4;
 const triggerById=id=>triggers.find(t=>t.id===id);
@@ -2674,6 +2676,7 @@ function renderTriggers(){
       </div>
       <div class="plat-creds">
         <div class="plat-cred"><span class="pk">Runs pipeline</span><span class="pv">${p?escapeHtml(p.name):'<span style="color:var(--amber)">(deleted pipeline)</span>'}</span></div>
+        <div class="plat-cred"><span class="pk">Version</span><span class="pv">${(t.ver&&t.ver!=='latest')?('v'+t.ver):'latest'}</span></div>
         <div class="plat-cred"><span class="pk">${t.type==='webhook'?'Endpoint':'Schedule'}</span><span class="pv mono">${escapeHtml(triggerSummary(t))}</span></div>
         ${(t.type==='webhook'&&t.hook&&t.hook.secret)?`<div class="plat-cred"><span class="pk">Signed with</span><span class="pv mono">${escapeHtml(t.hook.secret)}</span></div>`:''}
         <div class="plat-cred"><span class="pk">Debounce</span><span class="pv mono">${t.debounce!=null?t.debounce+'s':'30s'}</span></div>
@@ -2806,7 +2809,7 @@ function renderDocs(){
 
     ${H('Triggers','launch a pipeline automatically')}
     <div class="panel reveal">
-      <p class="subtitle" style="margin-top:0">A <b>trigger</b> runs a pipeline on its own — you pick the <b>pipeline</b> it launches (always its <b>latest version</b> at fire time). Manage them under <b>Workspace → Triggers</b>: ${btn('+ Add trigger')}, pick a type, set its args. Each can be <b>disabled</b> (paused) or removed. Two types today:</p>
+      <p class="subtitle" style="margin-top:0">A <b>trigger</b> runs a pipeline on its own — you pick the <b>pipeline</b> it launches and which <b>version</b> (its <b>latest</b> by default, or a specific version you pin for reproducibility). Manage them under <b>Workspace → Triggers</b>: ${btn('+ Add trigger')}, pick a type, set its args. Each can be <b>disabled</b> (paused) or removed. Two types today:</p>
       <div class="doc-kinds">
         <div class="doc-kind"><div class="di" style="color:var(--pbintra)">${lu('clock','var(--pbintra)',20)}</div><div><div class="dt">Time-based</div><div class="dd">Fires on a schedule — an <b>interval</b> (every N minutes/hours/days), <b>once</b> at a fixed date/time (self-disables after), or <b>recurring</b> via a 5-field cron expression.</div></div></div>
         <div class="doc-kind"><div class="di" style="color:var(--pbintra)">${lu('webhook','var(--pbintra)',20)}</div><div><div class="dt">Webhook</div><div class="dd">PBIntra mints a unique URL; any inbound <b>POST</b> starts a run. An optional <b>signing secret</b> makes it verify an <span class="mono">X-PBIntra-Signature</span> HMAC and reject unsigned calls.</div></div></div>
@@ -2922,7 +2925,7 @@ const HELP={
   shapes:{t:'Shapes',b:`<p><b>What.</b> Rendering rules for the schemaless entities (test case, response, score).</p><p><b>How.</b> PBIntra lists every distinct entity <b>shape</b> it has seen. For each, you design how it renders — map JSONPath fields to UI elements (text, badge, score-meter, audio, …) in rows/columns. Undefined shapes fall back to raw.</p><p><b>Why.</b> Runners emit free-form JSON, so no fixed schema exists. Shapes let humans decide how each observed structure should look — once — and every run follows it.</p>`},
   secrets:{t:'Secrets',b:`<p><b>What.</b> Named, encrypted credentials.</p><p><b>How.</b> Referenced by name from a subject's properties or a component's config; injected into the container at run time, never stored in the pipeline itself.</p><p><b>Why.</b> API keys and tokens must never live in plaintext in a run definition. Referencing by name keeps them out of shared artifacts.</p>`},
   results:{t:'Results & schemaless rendering',b:`<p><b>What.</b> The per-result view: each result is <code>{ testCase, response, score }</code> as free-form JSON.</p><p><b>How.</b> For each entity, if a <b>shape</b> is defined PBIntra renders it by that shape's rules (with a Shaped/Raw toggle); otherwise it shows raw JSON. The read-only pipeline above shows exactly which components produced the run.</p><p><b>Why.</b> No fixed schema means new runners work day one; shapes make their output readable without changing the engine.</p>`},
-  triggers:{t:'Triggers',b:`<p><b>What.</b> Automatic launchers for a pipeline. Two types today: <b>time-based</b> (fires on a schedule) and <b>webhook</b> (fires on an inbound HTTP request). Both run a <b>pipeline you choose</b> — its latest version at fire time.</p><p><b>How.</b> Click <b>Add trigger</b>, pick the type and the target pipeline, then set its args. Time-based: an <b>interval</b> (every N minutes/hours/days), a <b>once</b> fixed date/time, or a <b>recurring</b> cron expression. Webhook: PBIntra mints a unique URL — any POST to it starts a run (optionally HMAC-verified with a signing secret). <b>Disable</b> a trigger to pause it without deleting, or <b>Remove</b> it.</p><p><b>Why.</b> Backtesting is a day-after-day discipline — nightly schedules catch drift on their own, and webhooks let CI/CD or external events kick off a run right when something ships.</p>`},
+  triggers:{t:'Triggers',b:`<p><b>What.</b> Automatic launchers for a pipeline. Two types today: <b>time-based</b> (fires on a schedule) and <b>webhook</b> (fires on an inbound HTTP request). Both run a <b>pipeline you choose</b> — its <b>latest</b> version by default, or a <b>specific version</b> you pin.</p><p><b>How.</b> Click <b>Add trigger</b>, pick the type, the target pipeline and which version to run, then set its args. Time-based: an <b>interval</b> (every N minutes/hours/days), a <b>once</b> fixed date/time, or a <b>recurring</b> cron expression. Webhook: PBIntra mints a unique URL — any POST to it starts a run (optionally HMAC-verified with a signing secret). <b>Disable</b> a trigger to pause it without deleting, or <b>Remove</b> it.</p><p><b>Why.</b> Backtesting is a day-after-day discipline — nightly schedules catch drift on their own, and webhooks let CI/CD or external events kick off a run right when something ships.</p>`},
 };
 
 function openDrawer(kind, editIdx){
@@ -3183,7 +3186,10 @@ function openDrawer(kind, editIdx){
         ${editing?'<div class="hint">Type can’t be changed after creating.</div>':''}</div>
       <div class="field"><label>Run pipeline</label>
         <select id="tg_pipe">${pipelines.map(p=>`<option value="${p.id}" ${editing&&inst.pipelineId===p.id?'selected':''}>${escapeHtml(p.name)}</option>`).join('')}</select>
-        <div class="hint">The pipeline this trigger launches. Fires the pipeline's <b>latest version</b> at run time.</div></div>
+        <div class="hint">The pipeline this trigger launches.</div></div>
+      <div class="field"><label>Version</label>
+        <select id="tg_pver"></select>
+        <div class="hint"><b>Latest</b> always fires the pipeline's current version; pin a specific version to keep this trigger reproducible.</div></div>
       <div id="tg_body"></div>
       <details class="adv"><summary>Advanced</summary>
         <div class="field" style="margin-top:12px"><label>Debounce <span style="color:var(--fg-3);font-weight:400">· seconds</span></label>
@@ -3234,11 +3240,23 @@ function openDrawer(kind, editIdx){
       };
       renderType();
       if(!editing) $('#tg_type').onchange=renderType;
+      // version picker: "latest" + every version of the SELECTED pipeline; rebuilt when the pipeline changes
+      const buildPver=()=>{
+        const p=pipelineById($('#tg_pipe').value);
+        const vers=(p&&p.versions&&p.versions.length)?p.versions.map(v=>v.version):[p?(p.version||1):1];
+        const sorted=[...vers].sort((a,b)=>b-a);
+        const cur = editing && inst.ver!=null ? inst.ver : 'latest';   // stored ver only meaningful for the same pipeline
+        $('#tg_pver').innerHTML = `<option value="latest" ${cur==='latest'?'selected':''}>Latest (always current)</option>`
+          + sorted.map(v=>`<option value="${v}" ${String(cur)===String(v)?'selected':''}>v${v}${p&&v===p.version?' · current':''}</option>`).join('');
+      };
+      buildPver();
+      $('#tg_pipe').onchange=buildPver;
     };
     onsave=()=>{
       const name=$('#tg_name').value.trim()||'untitled-trigger';
       const type=$('#tg_type').value;
-      const patch={name, pipelineId:$('#tg_pipe').value, enabled:$('#tg_en').checked, debounce:Math.max(0,+($('#tg_debounce').value||0))};
+      const pv=$('#tg_pver')?$('#tg_pver').value:'latest';
+      const patch={name, pipelineId:$('#tg_pipe').value, ver:(pv==='latest'?'latest':+pv), enabled:$('#tg_en').checked, debounce:Math.max(0,+($('#tg_debounce').value||0))};
       if(type==='time'){
         const mode=$('#tg_mode').value;
         if(mode==='interval')      patch.schedule={mode, every:Math.max(1,+($('#tg_every').value||1)), unit:$('#tg_unit').value};
