@@ -1141,6 +1141,12 @@ details.adv[open]>summary::before{content:"▾ "}
       has ZERO effect on execution or wiring; there is no default schema. A RUNNER is outbound-
       only and an UPLOADER implements the fixed PBIntra ingest API (NOTE 4) — neither takes a
       custom schema.
+   28. OFFICIAL JS CLIENT: @peerbench/intra-client (npm, not yet published). A JS/TS container can
+      depend on it to handle ALL PBIntra communication for free — reading the injected env
+      (PBINTRA_ENDPOINT + the *_ENDPOINTS / SUBJECTS_JSON of NOTES 17-19), using the run token
+      (NOTE 3) to fetch test data, resolve secrets (NOTE 2) and report results (NOTE 4) — so a
+      component author doesn't re-implement the wire protocol by hand. It is a convenience SDK,
+      not a requirement: any language can speak the same HTTP contract directly.
    ───────────────────────────────────────────────────────────────────────────── */
 
 const SCORE_DAYS = 14;
@@ -2003,9 +2009,13 @@ function renderPipelines(){
   $('#nav-pipelines').textContent=pipelines.length;
 }
 let pipeVerSel={};   // pipeline id → which version is being inspected on the detail page (default = current)
+// version-chaining is a MODE: the per-row checkboxes only render while it's active (click "Chain versions" to enter,
+// pick 2+, confirm to finish). No point rendering checkboxes the rest of the time.
+let chainMode=false, chainModePid=null;
 function selectPipelineVersion(id, ver){ pipeVerSel[id]=ver; openPipeline(id); }
 function openPipeline(id){
   const p=pipelineById(id); if(!p) return;
+  if(chainMode && chainModePid!==id) chainMode=false;   // don't carry chain-mode across different pipelines
   go('pipelineDetail');
   const vers=(p.versions&&p.versions.length)?p.versions:[{version:p.version||1,createdAt:p.createdAt,graph:p.graph}];
   const selVer=(pipeVerSel[id]!=null && vers.some(v=>v.version===pipeVerSel[id]))?pipeVerSel[id]:p.version;
@@ -2016,7 +2026,7 @@ function openPipeline(id){
     const rc=runs.filter(r=>r.pipelineId===p.id && grp.includes(r.pver)); const avg=pipelineVersionScore(p.id,v.version);
     const chainBadge=chained?` <span class="tag" style="color:var(--cyan);border-color:rgba(38,198,218,.4)" title="aggregated as one">⛓ ${grp.map(x=>'v'+x).join('+')}</span> <a class="comp-link" style="cursor:pointer;border:none" onclick="event.stopPropagation();unchainVersion('${p.id}',${v.version});openPipeline('${p.id}')">unchain</a>`:'';
     return `<tr class="ver-row${v.version===selVer?' sel':''}" style="cursor:pointer" onclick="selectPipelineVersion('${p.id}',${v.version})">
-      <td style="width:24px"><input type="checkbox" class="ver-check" data-v="${v.version}" onclick="event.stopPropagation()" style="cursor:pointer"></td>
+      ${chainMode?`<td style="width:24px"><input type="checkbox" class="ver-check" data-v="${v.version}" onclick="event.stopPropagation()" style="cursor:pointer"></td>`:''}
       <td><b>v${v.version}</b>${v.version===p.version?' <span class="tag" style="color:var(--pbintra);border-color:rgba(62,207,142,.35)">current</span>':''}${chainBadge}</td>
       <td><span class="mono" style="color:var(--fg-3)">${v.createdAt}${v.note?' · '+escapeHtml(v.note):''}</span></td>
       <td class="mono">${rc.length} run${rc.length===1?'':'s'}${chained?' <span style="color:var(--fg-3);font-size:10px">chain</span>':''}</td>
@@ -2032,17 +2042,24 @@ function openPipeline(id){
     <div class="section-h" style="margin-top:22px"><h2>Versions</h2><div class="ln"></div><span style="font-family:var(--mono);font-size:11px;color:var(--fg-3)">every edit makes a new version · click one to inspect · run it or edit-from-it</span></div>
     <div class="panel reveal">
       <div id="chainBar" style="display:flex;align-items:center;gap:10px;padding:2px 4px 12px">
-        <span class="mono" style="font-size:11px;color:var(--fg-3)">Tick 2+ versions to <b>chain</b> them — their runs then aggregate as one config</span>
+        <span class="mono" style="font-size:11px;color:var(--fg-3)">${chainMode?'Tick 2+ versions, then confirm — their runs aggregate as one config':'Chain 2+ versions so their runs aggregate as one config'}</span>
         <div style="flex:1"></div>
-        <button class="btn sm ghost" id="chainBtn" disabled>⛓ Chain selected</button>
+        ${chainMode
+          ? `<button class="btn sm ghost" id="chainCancel">Cancel</button><button class="btn sm primary" id="chainBtn" disabled>⛓ Chain selected</button>`
+          : `<button class="btn sm ghost" id="chainStart">⛓ Chain versions</button>`}
       </div>
       <table class="kv">${vers.map(verRow).join('')}</table></div>`;
-  // wire the chain controls (checkboxes + Chain button) now that the markup exists
-  const checks=[...document.querySelectorAll('#pipelineDetailHead .ver-check')];
-  const chainBtn=$('#chainBtn');
-  const updChain=()=>{ if(chainBtn) chainBtn.disabled = checks.filter(c=>c.checked).length<2; };
-  checks.forEach(c=>c.onchange=updChain);
-  if(chainBtn) chainBtn.onclick=()=>{ const vs=checks.filter(c=>c.checked).map(c=>+c.dataset.v); if(vs.length>=2){ chainVersions(p.id, vs); toast('Chained '+vs.map(x=>'v'+x).join('+')+' — scores aggregate as one'); openPipeline(p.id); } };
+  // wire the chain controls — checkboxes only exist while chainMode is on
+  if(chainMode){
+    const checks=[...document.querySelectorAll('#pipelineDetailHead .ver-check')];
+    const chainBtn=$('#chainBtn');
+    const updChain=()=>{ if(chainBtn) chainBtn.disabled = checks.filter(c=>c.checked).length<2; };
+    checks.forEach(c=>c.onchange=updChain); updChain();
+    if(chainBtn) chainBtn.onclick=()=>{ const vs=checks.filter(c=>c.checked).map(c=>+c.dataset.v); if(vs.length>=2){ chainVersions(p.id, vs); toast('Chained '+vs.map(x=>'v'+x).join('+')+' — scores aggregate as one'); } chainMode=false; chainModePid=null; openPipeline(p.id); };
+    const cancel=$('#chainCancel'); if(cancel) cancel.onclick=()=>{ chainMode=false; chainModePid=null; openPipeline(p.id); };
+  } else {
+    const start=$('#chainStart'); if(start) start.onclick=()=>{ chainMode=true; chainModePid=p.id; openPipeline(p.id); };
+  }
   // graph + runs below reflect the SELECTED version (not necessarily the current one); runs pool across its chain
   const selGrp=chainOf(p, selVer), selLabel=selGrp.length>1?selGrp.map(x=>'v'+x).join('+'):'v'+selVer;
   mountGraph({graph:selEntry.graph||p.graph}, '#pipelineGraphPanel');
@@ -2218,6 +2235,7 @@ function openRoNode(n){
       ${cdesc?`<p class="subtitle" style="margin:0 0 6px">${escapeHtml(cdesc)}</p>`:''}
       <div class="field"><label>${n.type} container</label><div class="ro-val">${escapeHtml(n.comp||'—')}${img?`<div class="mono" style="color:var(--fg-3);font-size:11px;margin-top:3px">${escapeHtml(img)}${src}</div>`:''}</div></div>
       <div class="field"><label>Run on platform</label><div class="ro-val">${escapeHtml(platformLabel(n.platform||defaultPlatform))}</div></div>
+      ${n.keepSync?`<div class="field"><label>Keep in sync with source</label><div class="ro-val"><span class="trig-status on">On</span> <span style="color:var(--fg-3);font-size:11.5px">not pinned — uses the component's current definition, so this version isn't reproducible</span></div></div>`:''}
       <div class="field"><label>Arguments</label>${decl.length?`<table class="kv">${argRows}</table>`:'<div class="empty" style="padding:10px">this component declares no arguments</div>'}</div>
       ${(n.type==='runner')?`<div class="field"><label>Compatible</label><div class="ro-val" style="font-size:12px;line-height:1.7">connectors: ${(compat.connectors||[]).join(', ')||'—'}<br>storages: ${(compat.storages||[]).join(', ')||'—'}<br>scorers: ${(compat.scorers||[]).join(', ')||'—'}</div></div>`:''}`;
   }
@@ -2715,6 +2733,7 @@ function renderDocs(){
         ${kind('upload','uploader','Uploader','OPTIONAL export sink — after a run, PBIntra forwards each result out (S3, webhook, BigQuery, HF Hub, a pbfed node).')}
       </div>
       <div class="doc-note">The component <b>name is its id in the database</b> — id-safe only (<span class="mono">[A-Za-z0-9_-]</span>). <b>API schema is optional</b>: there is no default; upload an OpenAPI spec only to <i>document</i> a component (it renders with Scalar on the detail page). A ${tag('runner','runner')} is outbound-only and an ${tag('uploader','uploader')} implements a fixed PBIntra ingest API — neither takes a custom schema.</div>
+      <div class="doc-note">Building a JS/TS container? The official <span class="mono">@peerbench/intra-client</span> package (coming soon) handles <b>all</b> PBIntra communication for you — reading the injected endpoints, using the run token to fetch test data, resolve secrets and report results — so you don't hand-roll the wire protocol. It's a convenience SDK, not a requirement: any language can speak the same HTTP contract directly.</div>
       <div class="doc-sub">Add a component</div>
       ${steps([
         `Open <b>Components</b> (or a kind sub-menu), click ${btn('+ Add component')}.`,
@@ -3085,12 +3104,11 @@ function openDrawer(kind, editIdx){
         const users=pipelinesKeepSyncingComponent(ec.name);
         if(users.length){
           confirmDialog({
-            title:'Update a component kept in sync?',
+            title:'Update a kept-in-sync component?',
             confirmLabel:'Update component',
-            bodyHtml:`<div class="cfm-warn">The pipelines below use <b>${escapeHtml(ec.name)}</b> with <b>keep in sync with source</b> on, so this change (not just name/description) flows straight into them.</div>
-              <p><b>Existing runs stay exactly as they were</b> — every run froze this component at launch. Pipelines that <b>snapshotted</b> this component (the default) are also unaffected — they keep their pinned copy.</p>
-              <p>But because these keep it <b>live</b>, their <b>next run uses the new config</b>, which makes the version <b>no longer reproducible</b> (the change is applied retroactively to an existing version).</p>
-              <p>If this is a <b>behaviour-affecting</b> change, they should <b>cut a new version</b> (which re-snapshots) — or turn off keep-sync — so the change is captured intentionally:</p>
+            bodyHtml:`<div class="cfm-warn">These pipelines keep <b>${escapeHtml(ec.name)}</b> in sync, so your change takes effect on their <b>next run</b>.</div>
+              <p><b>Past runs are safe</b> — each froze the component when it ran.</p>
+              <p>The catch: these versions stop being <b>reproducible</b>. If the change affects behaviour, cut a <b>new version</b> (or turn off keep-sync).</p>
               <div class="cfm-list">${users.map(u=>`<span class="cfm-chip">${escapeHtml(u)}</span>`).join('')}</div>`,
             onConfirm:()=>{ doSave(); closeDrawer(); },
           });
