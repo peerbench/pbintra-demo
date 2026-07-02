@@ -1014,9 +1014,11 @@ details.adv[open]>summary::before{content:"▾ "}
       pollutes run history (the recorded image no longer identifies the code that ran).
    16. KEEP IN SYNC WITH SOURCE (per-node, advanced). A component node may opt OUT of
       snapshotting: when its `keepSync` is set, it is NOT frozen into the version and always
-      uses the component's CURRENT source definition. Trade-off (the reason it's advanced):
-      if the source later adds a REQUIRED arg the node doesn't set, runs of that pipeline
-      FAIL until the user fixes it by hand. Default OFF → reproducible, self-contained versions.
+      uses the component's CURRENT source definition. Consequence: that pipeline VERSION is
+      NO LONGER REPRODUCIBLE — any later change to the source (image tag/version, args,
+      compatibility) silently flows into this same version and changes what it runs. And if
+      the source adds a REQUIRED arg the node doesn't set, runs FAIL until fixed by hand.
+      Default OFF → reproducible, self-contained versions.
    ───────────────────────────────────────────────────────────────────────────── */
 
 const SCORE_DAYS = 14;
@@ -1233,7 +1235,7 @@ function snapshotNode(n){
   // "Keep in sync with source": opt OUT of snapshotting → readers fall back to the component's CURRENT def (NOTE 16)
   if(n.keepSync){ delete n.compSnap; return; }
   const c=components.find(x=>x.name===n.comp); if(!c) return;
-  n.compSnap={img:c.img, source:c.source, args:JSON.parse(JSON.stringify(c.args||[])),
+  n.compSnap={img:c.img, source:c.source, desc:c.desc, args:JSON.parse(JSON.stringify(c.args||[])),
     connectors:c.connectors?[...c.connectors]:undefined, storages:c.storages?[...c.storages]:undefined, scorers:c.scorers?[...c.scorers]:undefined};
 }
 function snapshotGraph(graph){ if(graph&&graph.nodes) graph.nodes.forEach(snapshotNode); return graph; }
@@ -2024,7 +2026,9 @@ function openRoNode(n){
       return `<tr><td>${escapeHtml(a.name)}</td><td>${cell}</td></tr>`;
     }).join('');
     const src=srcId?` <span style="color:var(--fg-3);font-size:11px">· via ${escapeHtml(containerSourceLabel(srcId))}</span>`:'';
+    const cdesc=snap?snap.desc:(comp?comp.desc:'');
     body=`
+      ${cdesc?`<p class="subtitle" style="margin:0 0 6px">${escapeHtml(cdesc)}</p>`:''}
       <div class="field"><label>${n.type} container</label><div class="ro-val">${escapeHtml(n.comp||'—')}${img?`<div class="mono" style="color:var(--fg-3);font-size:11px;margin-top:3px">${escapeHtml(img)}${src}</div>`:''}</div></div>
       <div class="field"><label>Run on platform</label><div class="ro-val">${escapeHtml(platformLabel(n.platform||defaultPlatform))}</div></div>
       <div class="field"><label>Arguments</label>${decl.length?`<table class="kv">${argRows}</table>`:'<div class="empty" style="padding:10px">this component declares no arguments</div>'}</div>
@@ -2572,7 +2576,7 @@ function renderDocs(){
         `<b>Version chaining.</b> You can chain 2+ versions of the same pipeline so their runs aggregate as one config (handy after a trivial cascade-version). Same-pipeline only — never across pipelines.`,
         `<b>Runs are point-in-time snapshots.</b> A run freezes the full config of every component it used — wiring, entered arg values, AND each component's definition (arg schema, image, compatibility) as it was WHEN IT RAN. If a component later gains a new arg, older runs still show the old shape, so you always see exactly which pipeline produced those results.`,
         `<b>Fixed image tags.</b> A component's image must pin a fixed tag (e.g. <span class="mono">:1.4.0</span>) or a digest — <span class="mono">:latest</span> is warned because it re-points to different code on rebuild, breaking reusability and run history.`,
-        `<b>Keep in sync (advanced).</b> A node can opt out of snapshotting so it always uses the component's current source definition. Powerful but risky — a new required arg upstream then breaks runs until fixed by hand.`,
+        `<b>Keep in sync (advanced).</b> A node can opt out of snapshotting so it always uses the component's current source definition — which makes that pipeline version <b>no longer reproducible</b> (source changes flow into it). Risky: a new required arg upstream then breaks runs until fixed by hand.`,
       ])}
       <div class="doc-note"><b>Builder implementation note.</b> This demo's pipeline builder is hand-rolled (single self-contained file, opens over <span class="mono">file://</span>). The real app should use <b>React Flow</b> — it supports typed handles on any side (top / bottom / left / right) natively, which a from-scratch canvas here provides by hand.</div>
     </div>`;
@@ -3058,7 +3062,7 @@ function selectNode(n){
     <details class="adv"><summary>Advanced</summary>
       <div class="field" style="margin-top:10px">
         <label class="cad-sec" style="font-size:12.5px"><input type="checkbox" id="nc_sync" ${n.keepSync?'checked':''}> Keep in sync with source</label>
-        <div class="hint" style="margin-top:7px">When on, this component is <b>not snapshotted</b> into the pipeline version — it always uses the source's <b>current</b> definition. <span style="color:var(--amber)">⚠ Needs extra care:</span> if the source later adds a <b>required</b> argument that isn't set here, runs of this pipeline will <b>fail</b> until you fix it by hand. Leave off for reproducible, self-contained versions.</div>
+        <div class="hint" style="margin-top:7px">When on, this component is <b>not snapshotted</b> — the version always uses the source's <b>current</b> definition. This means the version is <b>no longer reproducible</b>: any later change to the source (image tag/version, args, compatibility…) silently applies to <b>this same version</b> and changes what it runs. <span style="color:var(--amber)">⚠ And if the source adds a <b>required</b> arg that isn't set here, runs <b>fail</b> until you fix it by hand.</span> Leave off for reproducible, self-contained versions.</div>
       </div>
     </details>`;
   renderNodeArgs(n);
@@ -3134,7 +3138,8 @@ function startDrag(e,n,d){
   function move(ev){
     drag.moved=true;
     const mx=(ev.clientX-wrap.left-bpx)/bz, my=(ev.clientY-wrap.top-bpy)/bz;
-    n.x=Math.max(0, mx-drag.ox); n.y=Math.max(0, my-drag.oy);
+    // no bounds clamp — the canvas is effectively infinite (pan/zoom + Fit handle viewing); nodes never hit a wall
+    n.x=mx-drag.ox; n.y=my-drag.oy;
     d.style.left=n.x+'px'; d.style.top=n.y+'px'; drawEdges();
   }
   function up(){ document.removeEventListener('mousemove',move); document.removeEventListener('mouseup',up);
