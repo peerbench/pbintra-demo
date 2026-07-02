@@ -1215,6 +1215,21 @@ let pipelines = [
 // so past versions can be inspected / run / used as an edit base like the real (versioned) system would.
 pipelines.forEach(p=>{ (p.versions||[]).forEach(v=>{ if(!v.graph) v.graph=p.graph; }); });
 
+// POINT-IN-TIME SNAPSHOT (REAL-IMPL NOTE 13): a version/run must show the component & subject definitions AS THEY
+// WERE when that version was created — NOT their current definitions. So every version graph node carries a deep
+// snapshot of its component (args/img/source/compat) and subject (properties/connectors); read-only viewers use it.
+// (Refreshed whenever a NEW version is created — savePipeline / bumpPipelinesUsing — capturing the then-current defs.)
+function snapshotNode(n){
+  if(n.type==='subject'){ const s=subjects.find(x=>x.id===n.sid); if(s) n.subjSnap={name:s.name,displayName:s.displayName,connectors:[...(s.connectors||[])],properties:JSON.parse(JSON.stringify(s.properties||[])),meta:JSON.parse(JSON.stringify(s.meta||[]))}; return; }
+  if(n.type==='pbintra'||!n.comp) return;
+  const c=components.find(x=>x.name===n.comp); if(!c) return;
+  n.compSnap={img:c.img, source:c.source, args:JSON.parse(JSON.stringify(c.args||[])),
+    connectors:c.connectors?[...c.connectors]:undefined, storages:c.storages?[...c.storages]:undefined, scorers:c.scorers?[...c.scorers]:undefined};
+}
+function snapshotGraph(graph){ if(graph&&graph.nodes) graph.nodes.forEach(snapshotNode); return graph; }
+// baseline: snapshot every seed pipeline/version graph with the ORIGINAL defs (nothing edited yet)
+pipelines.forEach(p=>{ snapshotGraph(p.graph); (p.versions||[]).forEach(v=>{ if(v.graph) snapshotGraph(v.graph); }); });
+
 // Runs: a single EXECUTION of a pipeline. No name of its own — the UI shows the pipeline's name + when it ran.
 // run.graph is a FROZEN snapshot of the pipeline at launch, so later edits to the pipeline never rewrite history.
 // REAL-IMPL NOTE 13: the real app must also snapshot each component's DEFINITION at launch (arg schema, image,
@@ -1861,7 +1876,8 @@ function openPipeline(id){
 const compArgs=name=>((components.find(c=>c.name===name)||{}).args)||[];
 // short "N/M args" summary for a node: how many of the component's args have a value (entered or defaulted).
 function nodeArgSummary(n){
-  const decl=compArgs(n.comp); if(!decl.length) return 'no args';
+  // read-only frozen nodes carry a point-in-time compSnap; the live builder node has none → use current defs
+  const decl=(n.compSnap&&n.compSnap.args)?n.compSnap.args:compArgs(n.comp); if(!decl.length) return 'no args';
   const vals=n.argVals||{};
   const filled=decl.filter(a=>{ const v=vals[a.name]; if(v!=null&&v!=='') return true; return a.req==='default'; }).length;
   return filled+'/'+decl.length+' args';
@@ -1895,8 +1911,8 @@ function roNodeHtml(n){
     inner=`<div class="nbody">${s?`<div class="cn">${escapeHtml(subjLabel(s))}</div><div class="ci">⤷ ${endpointOf(s)}</div>`:'<div class="cn">subject</div>'}</div>`;
   } else if(n.type==='pbintra'){
     inner=`<div class="nbody"><div class="cn">PBIntra</div><div class="ci" style="color:var(--fg-3)">results are reported to PBIntra</div></div>`;
-  } else { const comp=components.find(x=>x.name===n.comp);
-    inner=`<div class="nbody"><div class="cn">${n.comp||n.type}</div>${comp?`<div class="ci">${comp.img}</div>`:''}<div class="args"><span>${nodeArgSummary(n)}</span><span>on ${platformLabel(n.platform||defaultPlatform)}</span></div></div>`;
+  } else { const comp=components.find(x=>x.name===n.comp); const img=(n.compSnap&&n.compSnap.img)||(comp?comp.img:'');
+    inner=`<div class="nbody"><div class="cn">${n.comp||n.type}</div>${img?`<div class="ci">${img}</div>`:''}<div class="args"><span>${nodeArgSummary(n)}</span><span>on ${platformLabel(n.platform||defaultPlatform)}</span></div></div>`;
   }
   return `<div class="node ro-node t-${n.type}${n.type==='subject'?' subject':''}" style="left:${n.x}px;top:${n.y}px" data-id="${n.id}">
     <div class="nhead"><span class="ntype" style="color:${col}"><i data-lucide="${lucideName[n.type]}"></i></span><span class="lbl">${n.type}</span></div>${inner}
@@ -1963,20 +1979,27 @@ function openRoNode(n){
     title='PBIntra hub'; sub='platform node · read-only';
     body=`<p class="subtitle" style="margin-top:0">The runner reports every result to the <b>PBIntra</b> hub. It is always present, takes no configuration, and forwards each result to any connected uploaders.</p>`;
   } else if(n.type==='subject'){
-    const s=subjById(n.sid);
-    title='Subject'; sub='read-only';
-    if(!s){ body='<div class="empty" style="padding:16px">subject not found</div>'; }
+    // prefer the point-in-time subject snapshot pinned on this version/run; fall back to current subject
+    const snap=n.subjSnap, s=subjById(n.sid);
+    title='Subject'; sub=snap?'read-only · as of this version':'read-only';
+    const label = snap?(snap.displayName||snap.name):(s?subjLabel(s):'');
+    const conns = snap?snap.connectors:(s?s.connectors:[]);
+    const propsArr = snap?snap.properties:(s?s.properties:[]);
+    if(!snap && !s){ body='<div class="empty" style="padding:16px">subject not found</div>'; }
     else {
-      const props=(s.properties||[]).map(p=>`<tr><td>${escapeHtml(p.key)}</td><td>${p.kind==='secret'?`<span class="atag sec">🔒 secret</span> <span class="mono" style="color:var(--fg-2)">${escapeHtml(p.value)}</span>`:`<span class="mono" style="color:var(--fg-2)">${escapeHtml(p.value)}</span>`}</td></tr>`).join('');
+      const props=(propsArr||[]).map(p=>`<tr><td>${escapeHtml(p.key)}</td><td>${p.kind==='secret'?`<span class="atag sec">🔒 secret</span> <span class="mono" style="color:var(--fg-2)">${escapeHtml(p.value)}</span>`:`<span class="mono" style="color:var(--fg-2)">${escapeHtml(p.value)}</span>`}</td></tr>`).join('');
       body=`
-        <div class="field"><label>Subject</label><div class="ro-val">${escapeHtml(subjLabel(s))}</div></div>
-        <div class="field"><label>Compatible connectors</label><div class="ro-val">${(s.connectors||[]).map(c=>escapeHtml(c)).join(' · ')||'—'}</div></div>
+        <div class="field"><label>Subject</label><div class="ro-val">${escapeHtml(label)}</div></div>
+        <div class="field"><label>Compatible connectors</label><div class="ro-val">${(conns||[]).map(c=>escapeHtml(c)).join(' · ')||'—'}</div></div>
         <div class="field"><label>Properties</label><table class="kv">${props||'<tr><td>—</td><td>no properties</td></tr>'}</table></div>`;
     }
   } else {
-    const comp=components.find(c=>c.name===n.comp);
-    title=n.type.charAt(0).toUpperCase()+n.type.slice(1); sub='read-only';
-    const decl=compArgs(n.comp), vals=n.argVals||{};
+    // prefer the point-in-time component snapshot (args/img/source/compat as of this version) over current defs
+    const comp=components.find(c=>c.name===n.comp), snap=n.compSnap;
+    title=n.type.charAt(0).toUpperCase()+n.type.slice(1); sub=snap?'read-only · as of this version':'read-only';
+    const decl=snap?snap.args:compArgs(n.comp), vals=n.argVals||{};
+    const img=snap?snap.img:(comp?comp.img:''), srcId=snap?snap.source:(comp?comp.source:undefined);
+    const compat=snap||comp||{};
     const argRows=decl.map(a=>{
       const entered = vals[a.name]!=null && vals[a.name]!=='';
       let cell;
@@ -1985,12 +2008,12 @@ function openRoNode(n){
       else cell=`<span style="color:var(--fg-3)">${a.req==='required'?'— not set (required)':'— not set'}</span>`;
       return `<tr><td>${escapeHtml(a.name)}</td><td>${cell}</td></tr>`;
     }).join('');
-    const src=comp&&comp.source?` <span style="color:var(--fg-3);font-size:11px">· via ${escapeHtml(containerSourceLabel(comp.source))}</span>`:'';
+    const src=srcId?` <span style="color:var(--fg-3);font-size:11px">· via ${escapeHtml(containerSourceLabel(srcId))}</span>`:'';
     body=`
-      <div class="field"><label>${n.type} container</label><div class="ro-val">${escapeHtml(n.comp||'—')}${comp?`<div class="mono" style="color:var(--fg-3);font-size:11px;margin-top:3px">${escapeHtml(comp.img)}${src}</div>`:''}</div></div>
+      <div class="field"><label>${n.type} container</label><div class="ro-val">${escapeHtml(n.comp||'—')}${img?`<div class="mono" style="color:var(--fg-3);font-size:11px;margin-top:3px">${escapeHtml(img)}${src}</div>`:''}</div></div>
       <div class="field"><label>Run on platform</label><div class="ro-val">${escapeHtml(platformLabel(n.platform||defaultPlatform))}</div></div>
       <div class="field"><label>Arguments</label>${decl.length?`<table class="kv">${argRows}</table>`:'<div class="empty" style="padding:10px">this component declares no arguments</div>'}</div>
-      ${(n.type==='runner'&&comp)?`<div class="field"><label>Compatible</label><div class="ro-val" style="font-size:12px;line-height:1.7">connectors: ${(comp.connectors||[]).join(', ')||'—'}<br>storages: ${(comp.storages||[]).join(', ')||'—'}<br>scorers: ${(comp.scorers||[]).join(', ')||'—'}</div></div>`:''}`;
+      ${(n.type==='runner')?`<div class="field"><label>Compatible</label><div class="ro-val" style="font-size:12px;line-height:1.7">connectors: ${(compat.connectors||[]).join(', ')||'—'}<br>storages: ${(compat.storages||[]).join(', ')||'—'}<br>scorers: ${(compat.scorers||[]).join(', ')||'—'}</div></div>`:''}`;
   }
   $('#drawerTitle').textContent=title; $('#drawerSub').textContent=sub; $('#drawerBody').innerHTML=body;
   $('#drawerFoot').innerHTML=''; const close=el('button','btn primary','Close'); close.onclick=closeDrawer; $('#drawerFoot').append(close);
@@ -2904,7 +2927,8 @@ function openBuilder(graph, pipelineId){
   if(graph && graph.nodes && graph.nodes.length){
     // load an existing pipeline (deep-cloned + re-id'd so edits don't touch the stored pipeline until Save)
     const idMap={};
-    nodes=graph.nodes.map((n,i)=>{ const nid='n'+i; idMap[n.id]=nid; return {...n, id:nid, args:(n.args||[]).map(a=>({...a}))}; });
+    // strip any point-in-time snapshots when loading into the builder — editing works against CURRENT defs
+    nodes=graph.nodes.map((n,i)=>{ const nid='n'+i; idMap[n.id]=nid; return {...n, id:nid, args:(n.args||[]).map(a=>({...a})), compSnap:undefined, subjSnap:undefined}; });
     nodeSeq=nodes.length;
     edges=graph.edges.map(([a,b])=>[idMap[a],idMap[b]]).filter(([a,b])=>a&&b);
   } else {
@@ -3197,6 +3221,7 @@ function bumpPipelinesUsing(usesFn, note){
     if(!(p.graph && p.graph.nodes && p.graph.nodes.some(usesFn))) return;
     const newVer=(p.version||1)+1;
     const graph={nodes:(p.graph.nodes||[]).map(x=>({...x})), edges:(p.graph.edges||[]).map(e=>[...e])};
+    snapshotGraph(graph);   // NEW version pins the NOW-current defs (incl. the change that triggered the bump)
     p.version=newVer; p.graph=graph;
     p.versions=p.versions||[]; p.versions.unshift({version:newVer, createdAt:'just now', note, graph});
     n++;
@@ -3206,6 +3231,7 @@ function bumpPipelinesUsing(usesFn, note){
 function savePipeline(){
   const name=$('#pipelineName').value.trim()||'Untitled pipeline';
   const graph={nodes:nodes.map(n=>({...n})), edges:edges.map(e=>[...e])};   // snapshot the built graph
+  snapshotGraph(graph);   // pin each component/subject's CURRENT definition onto this version (REAL-IMPL NOTE 13)
   let p = builderPipelineId ? pipelineById(builderPipelineId) : null;
   if(p){
     const newVer=(p.version||1)+1;
