@@ -310,6 +310,14 @@ details.adv[open]>summary::before{content:"▾ "}
 
 .node{position:absolute;pointer-events:auto;width:210px;background:linear-gradient(180deg,var(--card-2),var(--ink-2));
   border:1px solid var(--line-2);border-radius:12px;box-shadow:0 12px 30px rgba(0,0,0,.45);user-select:none;transition:box-shadow .15s,border-color .15s}
+/* per-type node border colour so each kind is easy to tell apart (defined BEFORE :hover/.sel so those still win) */
+.node.t-subject{border-color:var(--violet)}
+.node.t-connector{border-color:var(--cyan)}
+.node.t-storage{border-color:var(--amber)}
+.node.t-runner{border-color:var(--signal)}
+.node.t-scorer{border-color:var(--scorer)}
+.node.t-uploader{border-color:var(--uploader)}
+.node.t-pbintra{border-color:var(--pbintra);width:250px}
 .node:hover{border-color:#3a463f}
 .node.sel{border-color:var(--signal);box-shadow:0 0 0 1px var(--signal),0 14px 34px rgba(0,0,0,.5)}
 .node.pulse{animation:nodepulse .6s ease}
@@ -967,6 +975,9 @@ details.adv[open]>summary::before{content:"▾ "}
    8. PIPELINES ARE VERSIONED. Each edit — even the smallest — creates a NEW pipeline
       VERSION, listed under the same pipeline. Conceptually every version is its own
       pipeline; runs belong to a specific version and all aggregations are per-version.
+      CASCADE: editing a component OR subject that a pipeline uses ALSO opens a new
+      version of every pipeline using it — because the point-in-time config it pins
+      (see NOTE 13) has changed.
    9. SUBJECT METADATA IS REPORTED TO THE RUNNER. A subject's metadata (owner, tier,
       region…) is NOT part of identity (see 1), but it IS handed to the runner at run
       time so the runner can use it if it needs to (e.g. branch on tier, tag results).
@@ -993,6 +1004,11 @@ details.adv[open]>summary::before{content:"▾ "}
       with no such argument — so you can always see precisely which pipeline produced those
       results. (This demo freezes the graph wiring + entered values; the real app must also
       snapshot each component's definition, not read the component's current one.)
+   14. VERSION CHAINING. The user may CHAIN 2+ versions of the SAME pipeline so their runs
+      aggregate as ONE config everywhere (dashboard tile, leaderboard, version score, runs
+      list). Chaining is same-pipeline only — never across different pipelines (NOTE 7).
+      Handy when a trivial change (e.g. an auto-version from NOTE 8's cascade) split
+      otherwise-comparable runs across versions you still want counted together.
    ───────────────────────────────────────────────────────────────────────────── */
 
 const SCORE_DAYS = 14;
@@ -1321,19 +1337,39 @@ function compLinkList(arr, k){
 function pipelineSubjects(p){ return p?[...new Set((p.graph.nodes||[]).filter(n=>n.type==='subject').map(n=>n.sid).filter(Boolean))]:[]; }
 // version-aware variants: each version has its OWN graph, so scores/leaderboards reflect the selected version
 function versionGraph(p, ver){ const v=p&&(p.versions||[]).find(x=>x.version===ver); return (v&&v.graph)||(p?p.graph:null); }
-function versionSubjects(p, ver){ const g=versionGraph(p,ver); return g?[...new Set((g.nodes||[]).filter(n=>n.type==='subject').map(n=>n.sid).filter(Boolean))]:[]; }
-// PER-PIPELINE-VERSION scoring: a subject's avg score is computed ONLY from that pipeline version's runs
-// (never aggregated across pipelines — see REAL-IMPL NOTE 7). Returns 0..100 or null if no data.
+// VERSION CHAINING (same pipeline only — REAL-IMPL NOTE 14): the user can chain 2+ versions so aggregations treat
+// them as ONE. p.chains = [[v2,v3], …]. chainOf returns the group `ver` aggregates with (itself if not chained).
+function chainOf(p, ver){ if(!p) return [ver]; const g=(p.chains||[]).find(grp=>grp.includes(ver)); return g?[...g].sort((a,b)=>a-b):[ver]; }
+function versionSubjects(p, ver){
+  const set=new Set();
+  chainOf(p,ver).forEach(vn=>{ const g=versionGraph(p,vn); (g?g.nodes:[]).forEach(n=>{ if(n.type==='subject'&&n.sid) set.add(n.sid); }); });
+  return [...set];
+}
+// PER-PIPELINE-VERSION scoring: a subject's avg score is computed ONLY from that pipeline version's runs — or, if the
+// version is CHAINED, from all runs across the chain (never across DIFFERENT pipelines — REAL-IMPL NOTE 7). 0..100|null.
 function pipelineSubjectScore(pid, sid, ver){
+  const p=pipelineById(pid); const grp = ver==null?null:chainOf(p,ver);
   let sum=0,n=0;
-  runs.forEach(r=>{ if(r.pipelineId!==pid || r.status!=='done') return; if(ver!=null && r.pver!==ver) return;
+  runs.forEach(r=>{ if(r.pipelineId!==pid || r.status!=='done') return; if(grp && !grp.includes(r.pver)) return;
     ensureSim(r); (r.resultRows||[]).forEach(row=>{ if(row.subj===sid){ sum+=row.score; n++; } }); });
   return n? Math.round(sum/n*100) : null;
 }
-// a pipeline version's overall avg = mean of its done runs' scores
+// a pipeline version's overall avg = mean of its done runs' scores (pooled across the chain if chained)
 function pipelineVersionScore(pid, ver){
-  const rs=runs.filter(r=>r.pipelineId===pid && r.status==='done' && (ver==null||r.pver===ver));
+  const p=pipelineById(pid); const grp = ver==null?null:chainOf(p,ver);
+  const rs=runs.filter(r=>r.pipelineId===pid && r.status==='done' && (!grp||grp.includes(r.pver)));
   return rs.length? Math.round(rs.reduce((a,r)=>a+r.score,0)/rs.length) : null;
+}
+// create/replace a chain from a set of version numbers (drops them from any prior group; needs 2+); or dissolve one
+function chainVersions(pid, vers){
+  const p=pipelineById(pid); if(!p) return; p.chains=p.chains||[];
+  const set=[...new Set(vers)].sort((a,b)=>a-b);
+  p.chains=p.chains.map(g=>g.filter(v=>!set.includes(v))).filter(g=>g.length>1);   // remove chained vers from old groups
+  if(set.length>1) p.chains.push(set);
+}
+function unchainVersion(pid, ver){
+  const p=pipelineById(pid); if(!p||!p.chains) return;
+  p.chains=p.chains.map(g=>g.filter(v=>v!==ver)).filter(g=>g.length>1);
 }
 function endpointOf(s){
   const pri=['base_url','endpoint','url','host'];
@@ -1533,7 +1569,7 @@ function renderDashboard(){
   const live = liveCount();
   const tiles=[
     {k:'Subjects tracked',v:subjects.length,d:'<b>+2</b> this week',ico:'<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/>',spark:subjects[0].trend},
-    {k:'Avg quality',v:(pipelineVersionScore(dp.id,dver)??0),suf:'',d:`<b>${escapeHtml(dp.name)}</b> · v${dver}`,ico:'<path d="M3 17l6-6 4 4 7-7"/><path d="M14 7h6v6"/>',spark:[78,79,80,81,80,82,83,82,84,83,85,84,85,84]},
+    {k:'Avg quality',v:(pipelineVersionScore(dp.id,dver)??0),suf:'',d:`<b>${escapeHtml(dp.name)}</b> · ${chainOf(dp,dver).length>1?chainOf(dp,dver).map(x=>'v'+x).join('+'):'v'+dver}`,ico:'<path d="M3 17l6-6 4 4 7-7"/><path d="M14 7h6v6"/>',spark:[78,79,80,81,80,82,83,82,84,83,85,84,85,84]},
     {k:'Runs',v:runs.length,d:`<b>${live}</b> live now`,ico:'<path d="M5 3l14 9-14 9z"/>',spark:[2,3,1,4,3,5,2,4,3,4,2,5,3,4]},
     {k:'Results logged',v:totalResults,d:`<b>${runs[0]?runs[0].results:0}</b> latest run`,ico:'<path d="M4 6h16M4 12h16M4 18h10"/>',spark:[40,55,48,70,62,80,75,90,85,95,88,99,92,99]},
   ];
@@ -1553,10 +1589,10 @@ function renderDashboard(){
   // pipeline-version scope selector (scores are per pipeline version, never mixed)
   const sel=$('#dashPipeSel');
   if(sel){
-    sel.innerHTML=pipelines.flatMap(p=>(p.versions||[{version:p.version||1}]).map(v=>`<option value="${p.id}:${v.version}" ${dashSel.pid===p.id&&dashSel.ver===v.version?'selected':''}>${escapeHtml(p.name)} · v${v.version}</option>`)).join('');
+    sel.innerHTML=pipelines.flatMap(p=>(p.versions||[{version:p.version||1}]).map(v=>`<option value="${p.id}:${v.version}" ${dashSel.pid===p.id&&dashSel.ver===v.version?'selected':''}>${escapeHtml(p.name)} · v${v.version}${chainOf(p,v.version).length>1?' ⛓':''}</option>`)).join('');
     sel.onchange=()=>{ const [pid,ver]=sel.value.split(':'); dashSel={pid,ver:+ver}; renderDashboard(); };
   }
-  $('#lbScope') && ($('#lbScope').textContent=`${dp.name} · v${dver}`);
+  const dGrp=chainOf(dp,dver); $('#lbScope') && ($('#lbScope').textContent=`${dp.name} · ${dGrp.length>1?dGrp.map(x=>'v'+x).join('+'):'v'+dver}`);
 
   // leaderboard — subjects of the SELECTED pipeline version, ranked by their avg score IN THAT VERSION only
   const lb=$('#leaderboard'); lb.innerHTML='';
@@ -1767,12 +1803,16 @@ function openPipeline(id){
   const vers=(p.versions&&p.versions.length)?p.versions:[{version:p.version||1,createdAt:p.createdAt,graph:p.graph}];
   const selVer=(pipeVerSel[id]!=null && vers.some(v=>v.version===pipeVerSel[id]))?pipeVerSel[id]:p.version;
   const selEntry=vers.find(v=>v.version===selVer)||{version:selVer,graph:p.graph};
-  // each version row: click to inspect it (graph + runs below switch), or Run it / Edit-from-it (→ new version)
-  const verRow=v=>{ const rc=runs.filter(r=>r.pipelineId===p.id&&r.pver===v.version); const avg=pipelineVersionScore(p.id,v.version);
+  // each version row: click to inspect it (graph + runs below switch), or Run it / Edit-from-it (→ new version).
+  // run count + avg are chain-aware: a chained version pools runs across its whole chain group.
+  const verRow=v=>{ const grp=chainOf(p,v.version); const chained=grp.length>1;
+    const rc=runs.filter(r=>r.pipelineId===p.id && grp.includes(r.pver)); const avg=pipelineVersionScore(p.id,v.version);
+    const chainBadge=chained?` <span class="tag" style="color:var(--cyan);border-color:rgba(38,198,218,.4)" title="aggregated as one">⛓ ${grp.map(x=>'v'+x).join('+')}</span> <a class="comp-link" style="cursor:pointer;border:none" onclick="event.stopPropagation();unchainVersion('${p.id}',${v.version});openPipeline('${p.id}')">unchain</a>`:'';
     return `<tr class="ver-row${v.version===selVer?' sel':''}" style="cursor:pointer" onclick="selectPipelineVersion('${p.id}',${v.version})">
-      <td><b>v${v.version}</b>${v.version===p.version?' <span class="tag" style="color:var(--pbintra);border-color:rgba(62,207,142,.35)">current</span>':''}</td>
+      <td style="width:24px"><input type="checkbox" class="ver-check" data-v="${v.version}" onclick="event.stopPropagation()" style="cursor:pointer"></td>
+      <td><b>v${v.version}</b>${v.version===p.version?' <span class="tag" style="color:var(--pbintra);border-color:rgba(62,207,142,.35)">current</span>':''}${chainBadge}</td>
       <td><span class="mono" style="color:var(--fg-3)">${v.createdAt}${v.note?' · '+escapeHtml(v.note):''}</span></td>
-      <td class="mono">${rc.length} run${rc.length===1?'':'s'}</td>
+      <td class="mono">${rc.length} run${rc.length===1?'':'s'}${chained?' <span style="color:var(--fg-3);font-size:10px">chain</span>':''}</td>
       <td style="width:120px">${avg==null?'<span class="mono" style="font-size:10px;color:var(--fg-3)">no runs</span>':meter(avg)}</td>
       <td style="text-align:right;white-space:nowrap"><button class="btn sm primary" onclick="event.stopPropagation();runPipeline('${p.id}',${v.version})"><svg viewBox="0 0 24 24"><path d="M5 3l14 9-14 9z"/></svg> Run</button>
         <button class="btn sm ghost" onclick="event.stopPropagation();editPipelineVersion('${p.id}',${v.version})">Edit → new</button></td></tr>`; };
@@ -1783,14 +1823,27 @@ function openPipeline(id){
     <button class="btn ghost sm" onclick="editPipeline('${p.id}')"><svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg> Edit current</button>
     <button class="btn primary sm" onclick="runPipeline('${p.id}')"><svg viewBox="0 0 24 24"><path d="M5 3l14 9-14 9z"/></svg> Run current</button></div>
     <div class="section-h" style="margin-top:22px"><h2>Versions</h2><div class="ln"></div><span style="font-family:var(--mono);font-size:11px;color:var(--fg-3)">every edit makes a new version · click one to inspect · run it or edit-from-it</span></div>
-    <div class="panel reveal"><table class="kv">${vers.map(verRow).join('')}</table></div>`;
-  // graph + runs below reflect the SELECTED version (not necessarily the current one)
+    <div class="panel reveal">
+      <div id="chainBar" style="display:flex;align-items:center;gap:10px;padding:2px 4px 12px">
+        <span class="mono" style="font-size:11px;color:var(--fg-3)">Tick 2+ versions to <b>chain</b> them — their runs then aggregate as one config</span>
+        <div style="flex:1"></div>
+        <button class="btn sm ghost" id="chainBtn" disabled>⛓ Chain selected</button>
+      </div>
+      <table class="kv">${vers.map(verRow).join('')}</table></div>`;
+  // wire the chain controls (checkboxes + Chain button) now that the markup exists
+  const checks=[...document.querySelectorAll('#pipelineDetailHead .ver-check')];
+  const chainBtn=$('#chainBtn');
+  const updChain=()=>{ if(chainBtn) chainBtn.disabled = checks.filter(c=>c.checked).length<2; };
+  checks.forEach(c=>c.onchange=updChain);
+  if(chainBtn) chainBtn.onclick=()=>{ const vs=checks.filter(c=>c.checked).map(c=>+c.dataset.v); if(vs.length>=2){ chainVersions(p.id, vs); toast('Chained '+vs.map(x=>'v'+x).join('+')+' — scores aggregate as one'); openPipeline(p.id); } };
+  // graph + runs below reflect the SELECTED version (not necessarily the current one); runs pool across its chain
+  const selGrp=chainOf(p, selVer), selLabel=selGrp.length>1?selGrp.map(x=>'v'+x).join('+'):'v'+selVer;
   mountGraph({graph:selEntry.graph||p.graph}, '#pipelineGraphPanel');
   if($('#pipeGraphCap')) $('#pipeGraphCap').textContent='read-only · showing v'+selVer+' · Edit to open in the builder';
-  if($('#pipeRunsCap')) $('#pipeRunsCap').textContent='runs of v'+selVer;
+  if($('#pipeRunsCap')) $('#pipeRunsCap').textContent='runs of '+selLabel;
   const tb=$('#pipelineRunsBody'); tb.innerHTML='';
-  const used=runs.filter(r=>r.pipelineId===id && r.pver===selVer);
-  if(!used.length){ tb.innerHTML='<tr><td colspan="5"><div class="empty" style="padding:30px"><svg viewBox="0 0 24 24"><path d="M5 3l14 9-14 9z"/></svg><p>No runs for v'+selVer+' — Run it to create one.</p></div></td></tr>'; }
+  const used=runs.filter(r=>r.pipelineId===id && selGrp.includes(r.pver));
+  if(!used.length){ tb.innerHTML='<tr><td colspan="5"><div class="empty" style="padding:30px"><svg viewBox="0 0 24 24"><path d="M5 3l14 9-14 9z"/></svg><p>No runs for '+selLabel+' — Run it to create one.</p></div></td></tr>'; }
   else used.forEach(r=>{
     ensureSim(r);
     const tr=el('tr');
@@ -1845,7 +1898,7 @@ function roNodeHtml(n){
   } else { const comp=components.find(x=>x.name===n.comp);
     inner=`<div class="nbody"><div class="cn">${n.comp||n.type}</div>${comp?`<div class="ci">${comp.img}</div>`:''}<div class="args"><span>${nodeArgSummary(n)}</span><span>on ${platformLabel(n.platform||defaultPlatform)}</span></div></div>`;
   }
-  return `<div class="node ro-node${n.type==='subject'?' subject':''}" style="left:${n.x}px;top:${n.y}px" data-id="${n.id}">
+  return `<div class="node ro-node t-${n.type}${n.type==='subject'?' subject':''}" style="left:${n.x}px;top:${n.y}px" data-id="${n.id}">
     <div class="nhead"><span class="ntype" style="color:${col}"><i data-lucide="${lucideName[n.type]}"></i></span><span class="lbl">${n.type}</span></div>${inner}
     ${inPortsHtml(n.type)}${hasOut(n.type)?`<span class="port out ${outSideFor(n.type)}"></span>`:''}</div>`;
 }
@@ -2477,7 +2530,8 @@ function renderDocs(){
         `<b>Configurable args.</b> Each component declares its own args (required / optional / optional-with-default; a default may be a secret); the user fills them per node when building a pipeline.`,
         `<b>Multi-platform execution.</b> A container can run on Docker, Cloud Run, Lambda, Cloudflare Workers or Supabase Functions — chosen per container. Platform credentials live in Settings and are NOT secrets.`,
         `<b>Container sources.</b> Private images are pulled via a connected registry (Docker Hub, GCP AR, ECR, GHCR, ACR, custom) attached to the component; a source's credentials are registry access config, not the app's secrets.`,
-        `<b>Versioning.</b> Every pipeline edit makes a new version; runs belong to a version and all aggregation is per version.`,
+        `<b>Versioning.</b> Every pipeline edit makes a new version; runs belong to a version and all aggregation is per version. Editing a component or subject a pipeline <b>uses</b> also opens a new version of every pipeline using it (its pinned config changed).`,
+        `<b>Version chaining.</b> You can chain 2+ versions of the same pipeline so their runs aggregate as one config (handy after a trivial cascade-version). Same-pipeline only — never across pipelines.`,
         `<b>Runs are point-in-time snapshots.</b> A run freezes the full config of every component it used — wiring, entered arg values, AND each component's definition (arg schema, image, compatibility) as it was WHEN IT RAN. If a component later gains a new arg, older runs still show the old shape, so you always see exactly which pipeline produced those results.`,
       ])}
       <div class="doc-note"><b>Builder implementation note.</b> This demo's pipeline builder is hand-rolled (single self-contained file, opens over <span class="mono">file://</span>). The real app should use <b>React Flow</b> — it supports typed handles on any side (top / bottom / left / right) natively, which a from-scratch canvas here provides by hand.</div>
@@ -2581,7 +2635,9 @@ function openDrawer(kind, editIdx){
         es.name=name; es.displayName=displayName||undefined; es.connectors=connectors; es.properties=properties; es.meta=meta;
         renderSubjects();
         if($('[data-page="subjectDetail"]').classList.contains('active')) openSubject(es.id);
-        toast('Subject “'+name+'” updated');
+        // editing a used subject also pins a new point-in-time config → bump every pipeline that uses it
+        const bumped=bumpPipelinesUsing(nd=>nd.type==='subject'&&nd.sid===es.id, 'subject “'+name+'” updated');
+        toast('Subject “'+name+'” updated'+(bumped?` · ${bumped} pipeline${bumped===1?'':'s'} → new version`:''));
       } else {
         const id='s'+Math.random().toString(36).slice(2,6);
         const base=70+Math.floor(Math.random()*15);
@@ -2680,7 +2736,12 @@ function openDrawer(kind, editIdx){
       if(argsClean.length) obj.args=argsClean;   // configurable-arg schema (REAL-IMPL NOTE 10)
       const source=$('#f_source')?$('#f_source').value:''; if(source) obj.source=source;   // optional private-registry source (REAL-IMPL NOTE 12)
       if(desc) obj.desc=desc;   // optional human description, shown on the detail page
-      if(ec){ components[editIdx]=obj; renderComponents(); if($('[data-page="componentDetail"]').classList.contains('active')) openComponent(editIdx); toast('Component “'+name+'” updated'); }
+      if(ec){ components[editIdx]=obj; renderComponents(); if($('[data-page="componentDetail"]').classList.contains('active')) openComponent(editIdx);
+        // editing a used component pins a new point-in-time config → bump every pipeline that uses it (by its pre-edit name)
+        const bumped=bumpPipelinesUsing(nd=>nd.comp===ec.name, 'component “'+name+'” updated');
+        toast('Component “'+name+'” updated'+(bumped?` · ${bumped} pipeline${bumped===1?'':'s'} → new version`:''));
+        if(bumped && $('[data-page="pipelineDetail"]').classList.contains('active')) renderPipelines();
+      }
       else { const at=components.findIndex(c=>!c.builtin); components.splice(at<0?components.length:at,0,obj); renderComponents(); toast('Component “'+name+'” registered'); }
     };
   }
@@ -2885,7 +2946,7 @@ function removeNode(id){
 function renderNodes(){
   const c=$('#canvas'); c.innerHTML='';
   nodes.forEach(n=>{
-    const d=el('div','node'+(n.type==='subject'?' subject':'')+(selNode===n.id?' sel':''));
+    const d=el('div','node t-'+n.type+(n.type==='subject'?' subject':'')+(selNode===n.id?' sel':''));
     d.style.left=n.x+'px'; d.style.top=n.y+'px'; d.dataset.id=n.id;
     const col=nodeColor[n.type];
     let inner;
@@ -3128,6 +3189,20 @@ $('#builderCancel').onclick=()=>go('pipelines');
 
 // Builder SAVES a named pipeline (no run here). Runs are launched from the Pipelines page/detail.
 // Saving an existing pipeline ALWAYS creates a NEW version (every edit = new version); a brand-new pipeline starts at v1.
+// When a component or subject USED by a pipeline's current graph changes, every pipeline using it opens a NEW
+// version — because a version pins the point-in-time config (REAL-IMPL NOTES 8 & 13). Returns #pipelines bumped.
+function bumpPipelinesUsing(usesFn, note){
+  let n=0;
+  pipelines.forEach(p=>{
+    if(!(p.graph && p.graph.nodes && p.graph.nodes.some(usesFn))) return;
+    const newVer=(p.version||1)+1;
+    const graph={nodes:(p.graph.nodes||[]).map(x=>({...x})), edges:(p.graph.edges||[]).map(e=>[...e])};
+    p.version=newVer; p.graph=graph;
+    p.versions=p.versions||[]; p.versions.unshift({version:newVer, createdAt:'just now', note, graph});
+    n++;
+  });
+  return n;
+}
 function savePipeline(){
   const name=$('#pipelineName').value.trim()||'Untitled pipeline';
   const graph={nodes:nodes.map(n=>({...n})), edges:edges.map(e=>[...e])};   // snapshot the built graph
