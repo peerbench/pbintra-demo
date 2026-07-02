@@ -1034,13 +1034,14 @@ details.adv[open]>summary::before{content:"▾ "}
       AWS ECR, GHCR, Azure ACR, custom) under Settings → Container sources, then attaches that
       source to a component when entering its image URL. Public images need none. Like platform
       creds, a source's credentials are registry access config, not the app's own secrets.
-   13. A RUN IS A POINT-IN-TIME SNAPSHOT of every component it used, exactly as set in the
-      pipeline WHEN IT RAN — not just the wiring + entered arg values, but each component's full
-      DEFINITION at that moment (its arg schema, image tag, compatibility…). If a scorer later
-      gains a new argument (even one with a default), older runs must STILL show the old shape
-      with no such argument — so you can always see precisely which pipeline produced those
-      results. (This demo freezes the graph wiring + entered values; the real app must also
-      snapshot each component's definition, not read the component's current one.)
+   13. A VERSION IS A POINT-IN-TIME SNAPSHOT of every component/subject it uses (see NOTE 29 for
+      exactly WHEN it is taken) — not just the wiring + entered arg values, but each component's
+      full DEFINITION at that moment (its arg schema, image tag, compatibility…). Runs inherit
+      their version's snapshot. If a scorer later gains a new argument (even one with a default),
+      older versions/runs must STILL show the old shape with no such argument — so you can always
+      see precisely which pipeline produced those results. (This demo freezes the graph wiring +
+      entered values; the real app must also snapshot each component's definition, not read the
+      component's current one.)
    14. VERSION CHAINING. The user may CHAIN 2+ versions of the SAME pipeline so their runs
       aggregate as ONE config everywhere (dashboard tile, leaderboard, version score, runs
       list). Chaining is same-pipeline only — never across different pipelines (NOTE 7).
@@ -1147,6 +1148,14 @@ details.adv[open]>summary::before{content:"▾ "}
       (NOTE 3) to fetch test data, resolve secrets (NOTE 2) and report results (NOTE 4) — so a
       component author doesn't re-implement the wire protocol by hand. It is a convenience SDK,
       not a requirement: any language can speak the same HTTP contract directly.
+   29. SNAPSHOT IS TAKEN AT PIPELINE-DEFINITION TIME. A pipeline snapshots the CURRENT definition
+      of every component/subject in its graph WHEN THE PIPELINE IS DEFINED — i.e. when a brand-new
+      pipeline is created, or when a new VERSION of an existing one is saved (savePipeline). It is
+      NOT re-taken per run: every run of a given version inherits that version's snapshot, so two
+      runs of the same version always use identical component/subject defs even if the source
+      changed between them. To adopt a source change you save a NEW version (which re-snapshots).
+      The only exception is a node with keep-in-sync-with-source (NOTE 16), which is never
+      snapshotted and always reads the source's current definition. (Refines NOTE 13.)
    ───────────────────────────────────────────────────────────────────────────── */
 
 const SCORE_DAYS = 14;
@@ -2786,6 +2795,7 @@ function renderDocs(){
       <p class="subtitle" style="margin-top:0">A <b>pipeline</b> is the <b>named, reusable graph</b> you assemble on the canvas. <b>Every edit — even the smallest — makes a new version</b>; each version is effectively its own pipeline, listed under the same name. A <b>run</b> is one execution of a specific <b>version</b> (no name of its own). On a pipeline's detail you can browse versions, ${btn('Run','primary')} any version, or ${btn('Edit → new','ghost')} from one to base a new version on it.</p>
       <div class="doc-eg"><span class="eg-lbl">a pipeline's graph (read-only · scroll to zoom, drag to pan)</span><div id="docsGraph" style="overflow:auto"></div></div>
       <div class="doc-note"><b>Scores are per pipeline version</b> — never combined across pipelines. A subject scoring 50 in pipeline A and 10 in B has no meaningful single number, so every leaderboard / average is scoped to one version (pick it with the selector on the Dashboard).</div>
+      <div class="doc-note"><b>A version snapshots its components when it is defined.</b> The moment you save a pipeline — new pipeline or new version — PBIntra freezes each component's &amp; subject's <b>current definition</b> into that version. Every run of the version reuses that snapshot (never re-taken per run), so two runs of one version are always identical even if the source changed between them. Save a <b>new version</b> to adopt a change — unless a node is set to <i>keep in sync with source</i>, which stays live on purpose.</div>
       <div class="doc-sub">Build &amp; run</div>
       ${steps([
         `Open <b>Pipelines</b> → ${btn('+ New pipeline')} to open the builder.`,
