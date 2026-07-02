@@ -2137,13 +2137,13 @@ function openComponent(idx){
        <div class="panel reveal" style="padding:0;overflow:hidden"><iframe id="oaFrame" title="OpenAPI reference" style="width:100%;border:0;height:640px;display:block"></iframe></div>`
     : '';
   $('#componentDetailBody').innerHTML=`
-    <div class="panel reveal detail-hero">
+    <div class="panel reveal detail-hero"${c.desc?' style="align-items:flex-start"':''}>
       <div class="big-av" style="color:${col}"><i data-lucide="${lucideName[c.kind]}" width="28" height="28"></i></div>
       <div style="flex:1;min-width:200px"><div style="display:flex;align-items:center;gap:10px"><div style="font-family:var(--disp);font-weight:800;font-size:24px">${c.name}</div><span class="tag ${c.kind}">${c.kind}</span></div>
-        <div class="mono" style="color:var(--fg-3);font-size:12px;margin-top:6px">${c.img}</div></div>
+        <div class="mono" style="color:var(--fg-3);font-size:12px;margin-top:6px">${c.img}</div>
+        ${c.desc?`<p style="color:var(--fg-2);font-size:13px;line-height:1.55;margin:11px 0 0;max-width:640px">${escapeHtml(c.desc)}</p>`:''}</div>
       ${rightSide}
     </div>
-    ${c.desc?`<p class="subtitle" style="margin:-6px 0 2px">${escapeHtml(c.desc)}</p>`:''}
     ${c.builtin?`<div class="panel reveal" style="border-color:var(--line-2)"><div style="display:flex;align-items:center;gap:10px"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--fg-3)" stroke-width="1.8" style="flex:none"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg><span style="color:var(--fg-2)">Built-in storage that reads straight from the PBIntra database. <b style="color:var(--fg)">Not usable yet — coming soon.</b> Shown as a placeholder; it can't be added to a pipeline.</span></div></div>`:''}
     ${c.kind==='uploader'?`<div class="panel reveal" style="border-color:var(--line-2)"><div style="display:flex;align-items:center;gap:10px"><i data-lucide="upload" style="color:var(--uploader);flex:none"></i><span style="color:var(--fg-2)">PBIntra pushes every finished result to this uploader, so it must implement the <b style="color:var(--fg)">PBIntra result-ingest API</b> — a fixed contract (<b style="color:var(--fg)">not yet finalised</b>). Unlike connectors/storages/scorers, an uploader does <b style="color:var(--fg)">not</b> take a custom OpenAPI schema.</span></div></div>`:''}
     ${detailsSection}
