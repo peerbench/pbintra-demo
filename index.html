@@ -1026,8 +1026,10 @@ details.adv[open]>summary::before{content:"▾ "}
       (a runner may drive several of a kind). e.g.
       SCORER_ENDPOINTS=abcxx.scorers.scorer-a.pbintra.io,bbb.scorers.scorer-b.pbintra.io
    18. RUNNER MUST REACH PBINTRA. Beyond driving the components (NOTE 17), the runner MUST be
-      able to send requests to PBIntra — otherwise it cannot report results back. It uses its
-      temporary run token (NOTE 3) against the PBIntra endpoint to report each result (NOTE 4).
+      able to send requests to PBIntra — otherwise it cannot report results back. It gets the
+      PBIntra endpoint via the PBINTRA_ENDPOINT env var — a SINGLE endpoint (not plural, unlike
+      NOTE 17's *_ENDPOINTS) — and calls it with its temporary run token (NOTE 3) to report
+      each result (NOTE 4).
    ───────────────────────────────────────────────────────────────────────────── */
 
 const SCORE_DAYS = 14;
@@ -2578,7 +2580,7 @@ function renderDocs(){
         `<b>Data flow.</b> The runner ALWAYS reports to PBIntra; uploaders are the next hop and take no custom schema (fixed ingest API, not yet finalised).`,
         `<b>Fan-out.</b> A runner may use many scorers and pull from many storages; PBIntra may forward to many uploaders.`,
         `<b>Component endpoints (env).</b> The runner reaches the containers it drives via plural env vars — <span class="mono">CONNECTOR_ENDPOINTS</span>, <span class="mono">STORAGE_ENDPOINTS</span>, <span class="mono">SCORER_ENDPOINTS</span> — each a comma-separated list (it may drive several of a kind).`,
-        `<b>Runner must reach PBIntra.</b> It also needs network access to PBIntra — without it, results can't be reported back. It reports each result to the PBIntra endpoint using its temporary run token.`,
+        `<b>Runner must reach PBIntra.</b> It also needs network access to PBIntra — without it, results can't be reported back. It gets the endpoint via <span class="mono">PBINTRA_ENDPOINT</span> (a single endpoint) and reports each result there using its temporary run token.`,
         `<b>Subject metadata → runner.</b> A subject's metadata is not part of its identity, but it IS handed to the runner at run time so the runner can use it if it needs to.`,
         `<b>Configurable args.</b> Each component declares its own args (required / optional / optional-with-default; a default may be a secret); the user fills them per node when building a pipeline.`,
         `<b>Multi-platform execution.</b> A container can run on Docker, Cloud Run, Lambda, Cloudflare Workers or Supabase Functions — chosen per container. Platform credentials live in Settings and are NOT secrets.`,
