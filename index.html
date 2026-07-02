@@ -955,7 +955,9 @@ details.adv[open]>summary::before{content:"▾ "}
       wire to the runner directly. An uploader must implement the FIXED PBIntra
       result-ingest API (not yet finalised) and takes NO custom OpenAPI schema.
    5. A runner may use MULTIPLE scorers AND pull data from MULTIPLE storages (and
-      multiple connectors) — the typed input ports accept many connections each.
+      multiple connectors) — the typed input ports accept many connections each. But a
+      runner may also declare NONE of a kind: a self-contained black box (e.g. lm-eval)
+      loads its own datasets and scores internally, so it accepts no storage/scorer.
    6. SUBJECT NAMES follow the same rules as component names ([A-Za-z0-9_-], no
       spaces) because a subject's NAME is used as its id in the database.
    7. SCORES ARE PER-PIPELINE (really per pipeline VERSION — see 8). Never aggregate
@@ -1054,9 +1056,11 @@ let components = [
   {kind:'storage',name:'postgres-testcases',img:'ghcr.io/peerbench/storage-pg:1.1.0',desc:'Reads test cases from a Postgres table — for teams that curate their benchmark in a database.'},
   {kind:'storage',name:'pbfed-testcases',img:'ghcr.io/peerbench/storage-pbfed:1.0.0',desc:'Pulls test cases from a peerBench federation node — reuse benchmarks published by other federation members.'},
   // runners are outbound-only (nothing calls them) → no API schema to upload; each declares which components its image can drive
-  {kind:'runner',name:'lm-eval-blackbox',img:'ghcr.io/peerbench/runner-lm-eval:0.7.0',connectors:['openai-api','anthropic','vertex-gemini'],storages:['huggingface-dataset','s3-jsonl','pbfed-testcases'],scorers:['llm-judge','exact-match','regex-match'],
+  // SELF-CONTAINED black box: lm-eval loads its own datasets and scores internally (driven by args), so it takes
+  // NO storage and NO scorer — only a connector to reach the subject. Empty storages/scorers = accepts none.
+  {kind:'runner',name:'lm-eval-blackbox',img:'ghcr.io/peerbench/runner-lm-eval:0.7.0',connectors:['openai-api','anthropic','vertex-gemini'],storages:[],scorers:[],
     args:[{name:'tasks',type:'string',req:'required'},{name:'num_fewshot',type:'number',req:'default',default:'0'},{name:'limit',type:'number',req:'optional'}],
-    desc:'Wraps the real lm-evaluation-harness as a black box — for standard academic benchmarks (MMLU, include_de…).'},
+    desc:'Wraps the real lm-evaluation-harness as a black box — for standard academic benchmarks (MMLU, include_de…). Loads its own datasets and scores internally (via args), so it needs no storage or scorer.'},
   {kind:'runner',name:'single-turn',img:'ghcr.io/peerbench/runner-single:1.3.0',connectors:['openai-api','stateful-chat','anthropic','vertex-gemini','mastra'],storages:['postgres-testcases','huggingface-dataset','s3-jsonl','pbfed-testcases'],scorers:['exact-match','llm-judge','regex-match','semantic-similarity','cost-latency','rubric'],desc:'One prompt → one response → score. The default runner for most single-shot benchmarks.'},
   {kind:'runner',name:'multi-turn-conversation',img:'ghcr.io/peerbench/runner-multi:1.1.2',connectors:['stateful-chat','mastra-agent','livekit-voice'],storages:['postgres-testcases'],scorers:['llm-judge','rubric','cost-latency'],desc:'Runs a multi-turn dialogue against the subject — for agents / conversations, not single prompts.'},
   {kind:'scorer',name:'llm-judge',img:'ghcr.io/peerbench/scorer-llm-judge:1.1.0',desc:'LLM-as-judge — an LLM grades each response (with a rubric) and returns a score. The popular default.',
@@ -1300,7 +1304,7 @@ const pipelineById = id => pipelines.find(p=>p.id===id);
 // shared renderer: a list of component names as clickable links to their detail (lowercase, per-kind colour).
 // Used by BOTH the runner detail (Compatible connectors/storages/scorers) AND the subject detail (Compatible connectors).
 function compLinkList(arr, k){
-  if(!arr||!arr.length) return '<span style="color:var(--fg-3)">any</span>';
+  if(!arr||!arr.length) return '<span style="color:var(--fg-3)">none</span>';
   return arr.map(nm=>{ const j=components.findIndex(x=>x.name===nm);
     return j>=0?`<a class="comp-link ${k}" onclick="openComponent(${j})">${nm}</a>`:`<span class="comp-link ${k}" style="cursor:default;border-bottom:none">${nm}</span>`; }).join(', ');
 }
@@ -2419,7 +2423,7 @@ function renderDocs(){
     <div class="panel reveal">
       ${steps([
         `A ${tag('subject','subject')} wires only to a <b>compatible</b> ${tag('connector','connector')} — PBIntra refuses the rest.`,
-        `Into the ${tag('runner','runner')}: ${tag('storage','storage')} enters from the <b>top</b>, the ${tag('connector','connector')} from the <b>left</b>, ${tag('scorer','scorer')} from the <b>bottom</b> — and only the ones that runner declared compatible (many storages / scorers allowed).`,
+        `Into the ${tag('runner','runner')}: ${tag('storage','storage')} enters from the <b>top</b>, the ${tag('connector','connector')} from the <b>left</b>, ${tag('scorer','scorer')} from the <b>bottom</b> — and only the ones that runner declared compatible (many storages / scorers allowed). A <b>self-contained</b> runner (e.g. lm-eval, which loads its own data + scores internally) declares <b>none</b> and accepts no storage/scorer.`,
         `The runner's output → the ${lu('hexagon',kc.pbintra,13)} <b>PBIntra</b> hub → ${tag('uploader','uploader')}(s). Uploaders receive from the hub, never from the runner directly.`,
         `Change a node to something incompatible and the now-invalid wires are dropped automatically (with a toast).`,
       ])}
@@ -2975,13 +2979,15 @@ function canConnect(fromN,toN){
   if(toN.type==='pbintra' && fromN.type!=='runner') return {ok:false,msg:'only the runner reports to PBIntra'};
   if(fromN.type==='pbintra' && toN.type!=='uploader') return {ok:false,msg:'PBIntra forwards only to uploaders'};
   if(toN.type==='uploader' && fromN.type!=='pbintra') return {ok:false,msg:'an uploader receives results from the PBIntra node'};
-  // a runner declares which storage/connector/scorer containers its image can drive — enforce once both are chosen
+  // a runner declares which connector/storage/scorer containers its image can drive. An EMPTY list means it accepts
+  // NONE of that kind — e.g. a self-contained black box like lm-eval that loads its own data + scores internally.
   if(toN.type==='runner'){
     const rc=components.find(c=>c.name===toN.comp);
     const key=fromN.type==='connector'?'connectors':fromN.type==='storage'?'storages':fromN.type==='scorer'?'scorers':null;
-    if(rc && key && fromN.comp){
+    if(rc && key){
       const allowed=rc[key]||[];
-      if(allowed.length && !allowed.includes(fromN.comp)) return {ok:false,msg:toN.comp+' is not compatible with '+fromN.comp};
+      if(allowed.length===0) return {ok:false,msg:toN.comp+' takes no '+fromN.type+' — it is self-contained'};
+      if(fromN.comp && !allowed.includes(fromN.comp)) return {ok:false,msg:toN.comp+' is not compatible with '+fromN.comp};
     }
   }
   return {ok:true};
