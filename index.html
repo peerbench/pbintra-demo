@@ -1007,8 +1007,16 @@ details.adv[open]>summary::before{content:"▾ "}
    14. VERSION CHAINING. The user may CHAIN 2+ versions of the SAME pipeline so their runs
       aggregate as ONE config everywhere (dashboard tile, leaderboard, version score, runs
       list). Chaining is same-pipeline only — never across different pipelines (NOTE 7).
-      Handy when a trivial change (e.g. an auto-version from NOTE 8's cascade) split
-      otherwise-comparable runs across versions you still want counted together.
+      Handy when trivial edits split otherwise-comparable runs across versions.
+   15. CONTAINER IMAGE TAGS. A component's image MUST pin a fixed tag (e.g. :1.4.0) or an
+      @sha256 digest. `:latest` is allowed but discouraged (warned): it re-points to
+      different code whenever the image is rebuilt, which breaks pipeline reusability and
+      pollutes run history (the recorded image no longer identifies the code that ran).
+   16. KEEP IN SYNC WITH SOURCE (per-node, advanced). A component node may opt OUT of
+      snapshotting: when its `keepSync` is set, it is NOT frozen into the version and always
+      uses the component's CURRENT source definition. Trade-off (the reason it's advanced):
+      if the source later adds a REQUIRED arg the node doesn't set, runs of that pipeline
+      FAIL until the user fixes it by hand. Default OFF → reproducible, self-contained versions.
    ───────────────────────────────────────────────────────────────────────────── */
 
 const SCORE_DAYS = 14;
@@ -1222,6 +1230,8 @@ pipelines.forEach(p=>{ (p.versions||[]).forEach(v=>{ if(!v.graph) v.graph=p.grap
 function snapshotNode(n){
   if(n.type==='subject'){ const s=subjects.find(x=>x.id===n.sid); if(s) n.subjSnap={name:s.name,displayName:s.displayName,connectors:[...(s.connectors||[])],properties:JSON.parse(JSON.stringify(s.properties||[])),meta:JSON.parse(JSON.stringify(s.meta||[]))}; return; }
   if(n.type==='pbintra'||!n.comp) return;
+  // "Keep in sync with source": opt OUT of snapshotting → readers fall back to the component's CURRENT def (NOTE 16)
+  if(n.keepSync){ delete n.compSnap; return; }
   const c=components.find(x=>x.name===n.comp); if(!c) return;
   n.compSnap={img:c.img, source:c.source, args:JSON.parse(JSON.stringify(c.args||[])),
     connectors:c.connectors?[...c.connectors]:undefined, storages:c.storages?[...c.storages]:undefined, scorers:c.scorers?[...c.scorers]:undefined};
@@ -1882,6 +1892,11 @@ function nodeArgSummary(n){
   const filled=decl.filter(a=>{ const v=vals[a.name]; if(v!=null&&v!=='') return true; return a.req==='default'; }).length;
   return filled+'/'+decl.length+' args';
 }
+// A container image reference should pin a FIXED tag (or a @sha256 digest) so pipelines are reusable and run history
+// stays accurate — `:latest` re-points to different code as the image is rebuilt (REAL-IMPL NOTE 15).
+function imageTag(img){ const nameTag=(img.lastIndexOf('/')>=0?img.slice(img.lastIndexOf('/')+1):img); const ci=nameTag.indexOf(':'); return ci>=0?nameTag.slice(ci+1):null; }
+function imagePinned(img){ return /@sha256:/.test(img||'') || !!imageTag(img||''); }   // has a tag OR a digest
+function imageIsLatest(img){ return imageTag(img||'')==='latest'; }
 function synthGraph(sids, uploaders){
   const list=(sids&&sids.length?sids:['a']);
   let k=0; const nid=()=>'g'+(k++); const nodes=[], edges=[];
@@ -1912,7 +1927,7 @@ function roNodeHtml(n){
   } else if(n.type==='pbintra'){
     inner=`<div class="nbody"><div class="cn">PBIntra</div><div class="ci" style="color:var(--fg-3)">results are reported to PBIntra</div></div>`;
   } else { const comp=components.find(x=>x.name===n.comp); const img=(n.compSnap&&n.compSnap.img)||(comp?comp.img:'');
-    inner=`<div class="nbody"><div class="cn">${n.comp||n.type}</div>${img?`<div class="ci">${img}</div>`:''}<div class="args"><span>${nodeArgSummary(n)}</span><span>on ${platformLabel(n.platform||defaultPlatform)}</span></div></div>`;
+    inner=`<div class="nbody"><div class="cn">${n.comp||n.type}</div>${img?`<div class="ci">${img}</div>`:''}<div class="args"><span>${nodeArgSummary(n)}</span><span>on ${platformLabel(n.platform||defaultPlatform)}</span>${n.keepSync?'<span title="always uses the source definition">⟳ sync</span>':''}</div></div>`;
   }
   return `<div class="node ro-node t-${n.type}${n.type==='subject'?' subject':''}" style="left:${n.x}px;top:${n.y}px" data-id="${n.id}">
     <div class="nhead"><span class="ntype" style="color:${col}"><i data-lucide="${lucideName[n.type]}"></i></span><span class="lbl">${n.type}</span></div>${inner}
@@ -1996,7 +2011,7 @@ function openRoNode(n){
   } else {
     // prefer the point-in-time component snapshot (args/img/source/compat as of this version) over current defs
     const comp=components.find(c=>c.name===n.comp), snap=n.compSnap;
-    title=n.type.charAt(0).toUpperCase()+n.type.slice(1); sub=snap?'read-only · as of this version':'read-only';
+    title=n.type.charAt(0).toUpperCase()+n.type.slice(1); sub=n.keepSync?'read-only · live (kept in sync with source)':(snap?'read-only · as of this version':'read-only');
     const decl=snap?snap.args:compArgs(n.comp), vals=n.argVals||{};
     const img=snap?snap.img:(comp?comp.img:''), srcId=snap?snap.source:(comp?comp.source:undefined);
     const compat=snap||comp||{};
@@ -2192,7 +2207,7 @@ function openComponent(idx){
     <div class="section-h"><h2>Details</h2><div class="ln"></div><span style="font-family:var(--mono);font-size:11px;color:var(--fg-3)">everything set when this component was added</span></div>
     <div class="panel reveal"><table class="kv">
       <tr><td>Kind</td><td><span class="tag ${c.kind}">${c.kind}</span></td></tr>
-      <tr><td>Container image</td><td><span class="mono" style="color:var(--fg-2)">${c.img}</span></td></tr>
+      <tr><td>Container image</td><td><span class="mono" style="color:var(--fg-2)">${c.img}</span>${imageIsLatest(c.img)?' <span class="atag" style="color:var(--amber);border-color:rgba(240,180,41,.4)">⚠ :latest — not reproducible</span>':''}</td></tr>
       ${c.source?`<tr><td>Container source</td><td><span class="mono" style="color:var(--fg-2)">${escapeHtml(containerSourceLabel(c.source))}</span> <span style="color:var(--fg-3);font-size:11px">· private registry</span></td></tr>`:''}
       ${spec?`<tr><td>API schema</td><td>uploaded OpenAPI · <span class="mono" style="color:var(--fg-2)">${escapeHtml((c.openapi.info&&c.openapi.info.title)||'Uploaded API')}</span></td></tr>`:''}
       ${c.kind==='runner'?compRow('Compatible connectors',c.connectors,'connector')+compRow('Compatible storages',c.storages,'storage')+compRow('Compatible scorers',c.scorers,'scorer'):''}
@@ -2556,6 +2571,8 @@ function renderDocs(){
         `<b>Versioning.</b> Every pipeline edit makes a new version; runs belong to a version and all aggregation is per version. Editing a component or subject does NOT change existing versions (they keep their snapshot) — you manually create a new version to adopt the change.`,
         `<b>Version chaining.</b> You can chain 2+ versions of the same pipeline so their runs aggregate as one config (handy after a trivial cascade-version). Same-pipeline only — never across pipelines.`,
         `<b>Runs are point-in-time snapshots.</b> A run freezes the full config of every component it used — wiring, entered arg values, AND each component's definition (arg schema, image, compatibility) as it was WHEN IT RAN. If a component later gains a new arg, older runs still show the old shape, so you always see exactly which pipeline produced those results.`,
+        `<b>Fixed image tags.</b> A component's image must pin a fixed tag (e.g. <span class="mono">:1.4.0</span>) or a digest — <span class="mono">:latest</span> is warned because it re-points to different code on rebuild, breaking reusability and run history.`,
+        `<b>Keep in sync (advanced).</b> A node can opt out of snapshotting so it always uses the component's current source definition. Powerful but risky — a new required arg upstream then breaks runs until fixed by hand.`,
       ])}
       <div class="doc-note"><b>Builder implementation note.</b> This demo's pipeline builder is hand-rolled (single self-contained file, opens over <span class="mono">file://</span>). The real app should use <b>React Flow</b> — it supports typed handles on any side (top / bottom / left / right) natively, which a from-scratch canvas here provides by hand.</div>
     </div>`;
@@ -2683,8 +2700,9 @@ function openDrawer(kind, editIdx){
         <div class="choice kind-grid">
           ${[['connector','Connector'],['storage','Storage'],['runner','Runner'],['scorer','Scorer'],['uploader','Uploader']].map(o=>`<label><input type="radio" name="ck" value="${o[0]}" ${K===o[0]?'checked':''}><span>${o[1]}</span></label>`).join('')}
         </div></div>
-      <div class="field"><label>Container image URL</label><input id="f_img" placeholder="ghcr.io/org/image:tag" value="${ec?escapeHtml(ec.img):''}">
-        <div class="hint">A component is a prebuilt image hosted somewhere — point PBIntra at its URL.</div></div>
+      <div class="field"><label>Container image URL</label><input id="f_img" placeholder="ghcr.io/org/image:1.4.0" value="${ec?escapeHtml(ec.img):''}">
+        <div class="hint">A prebuilt image hosted somewhere — point PBIntra at its URL. A <b>fixed tag is required</b> (e.g. <span class="mono">:1.4.0</span>).</div>
+        <div class="hint" id="imgWarn" style="margin-top:6px"></div></div>
       <div class="field"><label>Container source <span style="color:var(--fg-3);font-weight:400">· optional</span></label>
         <select id="f_source"><option value="">Public / none</option>${connectedSources().map(s=>`<option value="${s.id}" ${ec&&ec.source===s.id?'selected':''}>${escapeHtml(s.name)}</option>`).join('')}</select>
         <div class="hint">For a private image, pick a registry connected under <b>Settings → Container sources</b> so PBIntra can pull it. Public images need none.</div></div>
@@ -2707,6 +2725,13 @@ function openDrawer(kind, editIdx){
     after=()=>{
       // component name becomes the DB id → allow only [A-Za-z0-9_-]; strip anything else as the user types
       $('#f_name').addEventListener('input',e=>{ e.target.value=e.target.value.replace(/[^A-Za-z0-9_-]/g,''); });
+      // live image-tag guidance: no tag = required error; :latest = discouraged; fixed tag / digest = ok
+      const imgWarn=()=>{ const v=$('#f_img').value.trim(); const w=$('#imgWarn'); if(!w) return;
+        if(!v){ w.innerHTML=''; return; }
+        if(!imagePinned(v)){ w.innerHTML='<span style="color:var(--red)">⚠ Add a fixed tag (e.g. <span class="mono">:1.4.0</span>) — required.</span>'; }
+        else if(imageIsLatest(v)){ w.innerHTML='<span style="color:var(--amber)">⚠ <b>:latest</b> re-points to different code when the image is rebuilt — it hurts pipeline reusability and pollutes run history. Prefer a fixed tag.</span>'; }
+        else { w.innerHTML='<span style="color:var(--signal)">✓ fixed '+(/@sha256:/.test(v)?'digest':'tag')+' — reproducible.</span>'; } };
+      $('#f_img').addEventListener('input',imgWarn); imgWarn();
       // a runner is outbound-only (nothing calls it) → no API schema to upload; it declares compatible components instead
       const syncKind=()=>{
         const isRunner=document.querySelector('input[name=ck]:checked').value==='runner';
@@ -2739,7 +2764,11 @@ function openDrawer(kind, editIdx){
     onsave=()=>{
       const name=$('#f_name').value.trim().replace(/[^A-Za-z0-9_-]/g,'')||'untitled-component';
       const kind2=document.querySelector('input[name=ck]:checked').value;
-      const img=$('#f_img').value.trim()||'ghcr.io/org/image:latest';
+      const img=$('#f_img').value.trim();
+      // a fixed tag (or @sha256 digest) is REQUIRED so runs are reproducible; :latest is allowed but warned
+      if(!img){ toast('⚠ Enter a container image URL (with a fixed tag)'); return false; }
+      if(!imagePinned(img)){ toast('⚠ Container image needs a fixed tag — e.g. :1.4.0'); return false; }
+      if(imageIsLatest(img)) toast('⚠ Saved with :latest — prefer a fixed tag for reproducible runs & clean history');
       const desc=$('#f_desc').value.trim();
       let obj;
       if(kind2==='runner'){
@@ -2822,7 +2851,7 @@ function openDrawer(kind, editIdx){
   if(after) after();
   $('#drawerFoot').innerHTML='';
   const cancel=el('button','btn ghost','Cancel'); cancel.onclick=closeDrawer;
-  const save=el('button','btn primary','Save'); save.onclick=()=>{ onsave(); closeDrawer(); };
+  const save=el('button','btn primary','Save'); save.onclick=()=>{ if(onsave()===false) return; closeDrawer(); };   // onsave may return false to block (e.g. invalid image tag)
   $('#drawerFoot').append(cancel,save);
   overlay.classList.add('show'); drawer.classList.add('show');
   setTimeout(()=>$('#f_name')?.focus(),200);
@@ -2980,7 +3009,7 @@ function renderNodes(){
     } else {
       const comp=components.find(x=>x.name===n.comp);
       inner=`<div class="nbody">${n.comp?`<div class="cn">${n.comp}</div><div class="ci">${comp?comp.img:'image:tag'}</div>
-        <div class="args"><span>${nodeArgSummary(n)}</span><span>on ${platformLabel(n.platform||defaultPlatform)}</span></div>`:`<div class="empty">click to pick a ${n.type} container</div>`}</div>`;
+        <div class="args"><span>${nodeArgSummary(n)}</span><span>on ${platformLabel(n.platform||defaultPlatform)}</span>${n.keepSync?'<span title="always uses the source definition">⟳ sync</span>':''}</div>`:`<div class="empty">click to pick a ${n.type} container</div>`}</div>`;
     }
     // PBIntra is the platform itself → always present, cannot be deleted (no ✕)
     d.innerHTML=`<div class="nhead"><span class="ntype" style="color:${col}"><i data-lucide="${lucideName[n.type]}"></i></span><span class="lbl">${n.type}</span><span class="gp">⠿</span><span class="help-q nq" onclick="event.stopPropagation();help('${n.type==='subject'?'subject_node':n.type}')" title="What is this?">?</span>${n.type==='pbintra'?'':'<span class="del" title="remove node">✕</span>'}</div>
@@ -3025,13 +3054,19 @@ function selectNode(n){
     <div class="field"><label>Run on platform</label><select id="nc_plat">${platOpts}</select>
       <div class="hint">Where PBIntra runs this container. Only <b>connected</b> platforms appear — add more in <b>Settings</b>.</div></div>
     <div class="field"><label>Arguments</label><div id="argRows"></div>
-      <div class="hint" id="argHint"></div></div>`;
+      <div class="hint" id="argHint"></div></div>
+    <details class="adv"><summary>Advanced</summary>
+      <div class="field" style="margin-top:10px">
+        <label class="cad-sec" style="font-size:12.5px"><input type="checkbox" id="nc_sync" ${n.keepSync?'checked':''}> Keep in sync with source</label>
+        <div class="hint" style="margin-top:7px">When on, this component is <b>not snapshotted</b> into the pipeline version — it always uses the source's <b>current</b> definition. <span style="color:var(--amber)">⚠ Needs extra care:</span> if the source later adds a <b>required</b> argument that isn't set here, runs of this pipeline will <b>fail</b> until you fix it by hand. Leave off for reproducible, self-contained versions.</div>
+      </div>
+    </details>`;
   renderNodeArgs(n);
   // args are declared BY the selected component → re-render the arg fields when the component changes
   $('#nc_comp').onchange=()=>renderNodeArgs(n);
   $('#drawerFoot').innerHTML='';
   const cancel=el('button','btn ghost','Cancel'); cancel.onclick=closeDrawer;
-  const save=el('button','btn primary','Apply'); save.onclick=()=>{ n.comp=$('#nc_comp').value; n.platform=$('#nc_plat').value; pruneInvalidEdges(); renderNodes(); drawEdges(); closeDrawer(); toast(n.type+' set to '+n.comp); };
+  const save=el('button','btn primary','Apply'); save.onclick=()=>{ n.comp=$('#nc_comp').value; n.platform=$('#nc_plat').value; n.keepSync=$('#nc_sync').checked; pruneInvalidEdges(); renderNodes(); drawEdges(); closeDrawer(); toast(n.type+' set to '+n.comp); };
   $('#drawerFoot').append(cancel,save);
   overlay.classList.add('show'); drawer.classList.add('show');
 }
