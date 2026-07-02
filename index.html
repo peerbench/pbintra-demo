@@ -518,6 +518,11 @@ details.adv[open]>summary::before{content:"▾ "}
 .plat-cred .pk{color:var(--fg-3)}
 .plat-cred .pv{color:var(--fg-2);text-align:right;word-break:break-all}
 .plat-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:auto}
+/* triggers reuse the plat-card shell; a disabled trigger dims + shows an off status pill */
+.plat-card.trig-off{opacity:.62}
+.trig-status{font-size:11px;font-weight:700;padding:1px 9px;border-radius:20px}
+.trig-status.on{color:var(--pbintra);background:rgba(62,207,142,.13)}
+.trig-status.off{color:var(--fg-3);background:var(--line-2)}
 /* Tom Select (compatible-connectors multi-select) — themed to match */
 .ts-wrapper{font-family:var(--sans)}
 .ts-control{background:var(--ink-3)!important;border:1px solid var(--line-2)!important;border-radius:9px!important;color:var(--fg)!important;box-shadow:none!important;padding:6px 8px!important;gap:5px!important}
@@ -692,10 +697,13 @@ details.adv[open]>summary::before{content:"▾ "}
     </div>
     <div class="nav-item" data-nav="pipelines">
       <svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M8.2 7.6L11 15.5M15.8 7.6L13 15.5"/></svg>
-      <span>Pipelines</span><span class="badge" id="nav-pipelines">5</span></div>
+      <span>Pipelines</span><span class="badge" id="nav-pipelines">7</span></div>
     <div class="nav-item" data-nav="runs">
       <svg viewBox="0 0 24 24"><path d="M5 3l14 9-14 9z"/></svg>
       <span>Runs</span><span class="badge" id="nav-runs">5</span></div>
+    <div class="nav-item" data-nav="triggers">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+      <span>Triggers</span><span class="badge" id="nav-trig">3</span></div>
     <div class="nav-item" data-nav="shapes">
       <svg viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/></svg>
       <span>Shapes</span><span class="badge">3</span></div>
@@ -919,6 +927,12 @@ details.adv[open]>summary::before{content:"▾ "}
         <div class="grid" id="sourceGrid" style="grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;margin-top:18px"></div>
       </section>
 
+      <!-- ═══════ WORKSPACE · TRIGGERS ═══════ -->
+      <section class="page" data-page="triggers">
+        <p class="subtitle">Triggers launch a pipeline automatically. Use <b>Add trigger</b> (top-right) to create one — pick a type, choose the pipeline it runs, and set its arguments. A <b>time-based</b> trigger fires on a schedule (an interval, a one-off date, or a recurring cron); a <b>webhook</b> trigger fires whenever its unique URL receives a request. Disable a trigger to pause it, or remove it entirely.</p>
+        <div class="grid" id="triggerGrid" style="grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;margin-top:18px"></div>
+      </section>
+
     </div>
   </main>
 </div>
@@ -1037,6 +1051,20 @@ details.adv[open]>summary::before{content:"▾ "}
       knows to resolve them through the PBIntra API (with its run token, NOTE 3) before use. e.g.
       SUBJECTS_JSON={"claude-sonnet-4-5":{"base_url":"openrouter.ai/api/v1","model":"…",
       "api_key:SECRET":"","temperature":"0"}}
+   20. TRIGGERS. A trigger launches a PIPELINE automatically — always the pipeline's LATEST
+      version at fire time (it references a pipeline, not a frozen version). Each trigger has an
+      `enabled` flag (disable = pause without deleting) and can be removed. Two types:
+        • TIME-BASED — three schedule modes: `interval` (every N minutes/hours/days),
+          `once` (a single fixed date/time; self-disables after firing), and `recurring`
+          (a standard 5-field cron expression). The scheduler is server-side.
+        • WEBHOOK — PBIntra mints a unique ingress URL per trigger; an inbound HTTP POST starts
+          a run. An optional signing secret makes PBIntra verify an X-PBIntra-Signature HMAC and
+          reject unsigned/mismatched calls.
+      Every trigger also has a DEBOUNCE window (Advanced; default 30s, 0 disables): a fire that
+      lands within `debounce` seconds of the last run is collapsed/ignored, so bursty webhooks or
+      overlapping schedules can't spawn duplicate runs. (Same behaviour as renisa's triggers.)
+      Firing a trigger creates a normal Run of that pipeline (same as the Run button), so all
+      run machinery (token, snapshot, reporting) is unchanged — triggers are just the launcher.
    ───────────────────────────────────────────────────────────────────────────── */
 
 const SCORE_DAYS = 14;
@@ -1237,6 +1265,12 @@ let pipelines = [
     {version:1,createdAt:'11d ago',note:'initial',            graph:synthGraph(['a','c','e','d'], ['s3-results-exporter'])}]},
   {id:'p4',name:'Voice quality daily',   graph:synthGraph(['d','a']),                                                 createdAt:'9d ago', version:1, versions:[{version:1,createdAt:'9d ago',note:'initial'}]},
   {id:'p5',name:'Qwen cold-start probe', graph:synthGraph(['f','b'], ['webhook-exporter']),                           createdAt:'4d ago', version:1, versions:[{version:1,createdAt:'4d ago',note:'initial'}]},
+  // SELF-CONTAINED runner: lm-eval-blackbox loads its own datasets + scores internally → NO storage, NO scorer.
+  {id:'p6',name:'MMLU black-box (lm-eval)', graph:synthGraph(['a','c'], null, {runner:'lm-eval-blackbox',storage:null,scorer:null}), createdAt:'2d ago', version:2, versions:[
+    {version:2,createdAt:'2d ago', note:'added gemini subject', graph:synthGraph(['a','c'], null, {runner:'lm-eval-blackbox',storage:null,scorer:null})},
+    {version:1,createdAt:'8d ago', note:'initial · no storage/scorer', graph:synthGraph(['a'], null, {runner:'lm-eval-blackbox',storage:null,scorer:null})}]},
+  // SCORER OPTIONAL: a runner that self-grades → storage feeds it, but no scorer node in the pipeline.
+  {id:'p7',name:'Latency-only probe',    graph:synthGraph(['b','d'], null, {scorer:null}),                            createdAt:'1d ago', version:1, versions:[{version:1,createdAt:'1d ago',note:'initial · no scorer'}]},
 ];
 
 // demo: give every seed version a graph snapshot (reuse the pipeline's current graph as a placeholder)
@@ -1336,6 +1370,32 @@ const connectedPlatforms=()=>platforms;                 // every added instance 
 const containerSourceById=id=>containerSources.find(s=>s.id===id);
 const containerSourceLabel=id=>(containerSourceById(id)||{}).name||'';
 const connectedSources=()=>containerSources;
+
+// ── Triggers ────────────────────────────────────────────────────────────────
+// A trigger launches a PIPELINE automatically (its latest version at fire time). Same shape as platforms/sources:
+// a fixed TYPE CATALOG + a user-added list of instances. Two types today: TIME-BASED (fires on a schedule —
+// interval | once | recurring-cron) and WEBHOOK (fires when its unique URL is hit). See REAL-IMPL NOTE 20.
+const TRIGGER_TYPES = [
+  {id:'time',    name:'Time-based', icon:'clock',   note:'Runs the pipeline on a schedule — an interval, a one-off date, or a recurring cron.'},
+  {id:'webhook', name:'Webhook',    icon:'webhook', note:'Runs the pipeline whenever an HTTP request hits its unique webhook URL.'},
+];
+const triggerType=id=>TRIGGER_TYPES.find(t=>t.id===id);
+let triggers = [
+  {id:'tg1', type:'time',    name:'include_de nightly',   pipelineId:'p1', enabled:true,  debounce:30,  schedule:{mode:'recurring', cron:'0 2 * * *'}},
+  {id:'tg2', type:'time',    name:'MMLU sweep every 6h',  pipelineId:'p3', enabled:true,  debounce:30,  schedule:{mode:'interval', every:6, unit:'hours'}},
+  {id:'tg3', type:'webhook', name:'CI post-deploy check', pipelineId:'p2', enabled:false, debounce:120, hook:{path:'t/2f9c1a', secret:'WEBHOOK_SIGNING_SECRET'}},
+];
+let trigSeq=4;
+const triggerById=id=>triggers.find(t=>t.id===id);
+// one-line human summary of when/how a trigger fires (shown on the card)
+function triggerSummary(t){
+  if(t.type==='webhook') return 'POST hooks.pbintra.io/'+((t.hook||{}).path||'…');
+  const s=t.schedule||{};
+  if(s.mode==='interval')  return 'Every '+s.every+' '+s.unit;
+  if(s.mode==='once')      return 'Once · '+(s.at?s.at.replace('T',' '):'—');
+  if(s.mode==='recurring') return 'Recurring · '+s.cron;
+  return '';
+}
 
 // test-case pool a run draws from (storage would serve these in reality)
 const TESTCASES = [
@@ -1549,6 +1609,7 @@ const pageMeta = {
   pipelines:{title:'Pipelines',crumb:'PBINTRA / PIPELINES',action:{label:'New pipeline',primary:true,icon:'plus',fn:()=>openBuilder()}},
   pipelineDetail:{title:'Pipeline',crumb:'PBINTRA / PIPELINES / DETAIL',action:{label:'← Back to pipelines',primary:false,fn:()=>go('pipelines')}},
   runs:{title:'Runs',crumb:'PBINTRA / RUNS',action:{label:'New pipeline',primary:true,icon:'plus',fn:()=>openBuilder()}},
+  triggers:{title:'Triggers',crumb:'PBINTRA / TRIGGERS',action:{label:'Add trigger',primary:true,icon:'plus',fn:()=>openDrawer('trigger')}},
   runDetail:{title:'Run detail',crumb:'PBINTRA / RUNS / DETAIL',action:{label:'← Back to runs',primary:false,fn:()=>go('runs')}},
   builder:{title:'Pipeline builder',crumb:'PBINTRA / PIPELINES / NEW',action:null},
   secrets:{title:'Secrets',crumb:'PBINTRA / SECRETS',action:{label:'Add secret',primary:true,icon:'plus',fn:()=>openDrawer('secret')}},
@@ -1568,7 +1629,7 @@ function go(page){
   if(page!=='components') $$('.nav-subitem').forEach(s=>s.classList.remove('active'));
   const m=pageMeta[page];
   $('#ptitle').textContent=m.title; $('#crumb').textContent=m.crumb;
-  const pageHelp={dashboard:'dashboard',subjects:'subjects',subjectDetail:'subjects',components:'components',componentDetail:'components',pipelines:'pipelines',pipelineDetail:'pipelines',runs:'runs',runDetail:'results',builder:'builder',shapes:'shapes',shapeEditor:'shapes',secrets:'secrets',settings:'settings',containerSources:'containerSources'};
+  const pageHelp={dashboard:'dashboard',subjects:'subjects',subjectDetail:'subjects',components:'components',componentDetail:'components',pipelines:'pipelines',pipelineDetail:'pipelines',runs:'runs',runDetail:'results',builder:'builder',shapes:'shapes',shapeEditor:'shapes',secrets:'secrets',settings:'settings',containerSources:'containerSources',triggers:'triggers'};
   $('#phelp').innerHTML = pageHelp[page]?helpBtn(pageHelp[page]):'';
   const pa=$('#paction'); pa.innerHTML='';
   if(m.action){
@@ -1582,6 +1643,7 @@ function go(page){
   if(page==='shapes') renderShapesList();
   if(page==='settings') renderSettings();
   if(page==='containerSources') renderContainerSources();
+  if(page==='triggers') renderTriggers();
   if(page==='docs') renderDocs();
 }
 $$('.nav-item').forEach(n=>n.onclick=()=>go(n.dataset.nav));
@@ -1917,24 +1979,30 @@ function nodeArgSummary(n){
 function imageTag(img){ const nameTag=(img.lastIndexOf('/')>=0?img.slice(img.lastIndexOf('/')+1):img); const ci=nameTag.indexOf(':'); return ci>=0?nameTag.slice(ci+1):null; }
 function imagePinned(img){ return /@sha256:/.test(img||'') || !!imageTag(img||''); }   // has a tag OR a digest
 function imageIsLatest(img){ return imageTag(img||'')==='latest'; }
-function synthGraph(sids, uploaders){
+function synthGraph(sids, uploaders, opts){
   const list=(sids&&sids.length?sids:['a']);
+  const o=opts||{};
+  // storage & scorer are BOTH OPTIONAL in a pipeline — a self-contained runner (e.g. lm-eval-blackbox) does its
+  // own data-loading + grading internally, so pass storage:null / scorer:null to omit those nodes entirely.
+  const runComp = o.runner || 'single-turn';
+  const stoComp = ('storage' in o) ? o.storage : 'postgres-testcases';   // null/false → no storage node
+  const scoComp = ('scorer'  in o) ? o.scorer  : 'exact-match';          // null/false → no scorer node
   let k=0; const nid=()=>'g'+(k++); const nodes=[], edges=[];
   // storage sits directly ABOVE the runner, scorer directly BELOW, connectors to its LEFT (subjects far left);
   // runner → PBIntra hub → optional uploader(s). Subjects may declare different connectors → one connector node
-  // per distinct compatible connector, all → runner. Uses single-turn (speaks openai + stateful) + postgres +
-  // exact-match so every seed wire is compatible.
+  // per distinct compatible connector, all → runner. Default seed uses single-turn + postgres + exact-match so
+  // every wire is compatible; self-contained variants drop storage/scorer.
   const subj=id=>subjects.find(s=>s.id===id);
   const subs=list.map((sid,i)=>{ const id=nid(); nodes.push({id,type:'subject',sid,x:20,y:50+i*120}); return {id,sid}; });
   const midY=Math.max(210, 50+(list.length-1)*60);
   const groups={}; subs.forEach(s=>{ const cn=((subj(s.sid)||{}).connectors||[])[0]||'openai-api'; (groups[cn]=groups[cn]||[]).push(s.id); });
   const conNames=Object.keys(groups), conIds={};
   conNames.forEach((cn,i)=>{ const id=nid(); conIds[cn]=id; nodes.push({id,type:'connector',comp:cn,x:330,y:midY+(i-(conNames.length-1)/2)*150}); });
-  const sto=nid(); nodes.push({id:sto,type:'storage',comp:'postgres-testcases',x:620,y:midY-175});
-  const sco=nid(); nodes.push({id:sco,type:'scorer',comp:'exact-match',x:620,y:midY+175});
-  const run=nid(); nodes.push({id:run,type:'runner',comp:'single-turn',x:620,y:midY});
+  const run=nid(); nodes.push({id:run,type:'runner',comp:runComp,x:620,y:midY});
+  if(stoComp){ const sto=nid(); nodes.push({id:sto,type:'storage',comp:stoComp,x:620,y:midY-175}); edges.push([sto,run]); }
+  if(scoComp){ const sco=nid(); nodes.push({id:sco,type:'scorer', comp:scoComp,x:620,y:midY+175}); edges.push([sco,run]); }
   subs.forEach(s=>{ const cn=((subj(s.sid)||{}).connectors||[])[0]||'openai-api'; edges.push([s.id, conIds[cn]]); });
-  conNames.forEach(cn=>edges.push([conIds[cn], run])); edges.push([sto,run],[sco,run]);
+  conNames.forEach(cn=>edges.push([conIds[cn], run]));
   // runner ALWAYS reports to the PBIntra hub; uploaders (optional) hang off PBIntra — never off the runner directly
   const pb=nid(); nodes.push({id:pb,type:'pbintra',x:900,y:midY}); edges.push([run,pb]);
   (uploaders||[]).forEach((un,i)=>{ const id=nid(); nodes.push({id,type:'uploader',comp:un,x:1180,y:midY+(i-(((uploaders.length)-1)/2))*150}); edges.push([pb,id]); });
@@ -2432,6 +2500,43 @@ function renderConnGrid(list, gridSel, badgeSel, drawerKind, typeOf, emptyHint){
 function renderSettings(){ renderConnGrid(platforms, '#platformGrid', '#nav-plat', 'platform', platformType, 'No platforms yet — click “Add platform” to connect one.'); }
 function renderContainerSources(){ renderConnGrid(containerSources, '#sourceGrid', '#nav-src', 'source', sourceType, 'No container sources yet — click “Add container source” to connect a registry.'); }
 
+// triggers get their own card renderer (not renderConnGrid): each card also carries an enable/disable toggle,
+// the target pipeline, and a schedule/endpoint summary. A disabled trigger dims (.trig-off).
+function renderTriggers(){
+  const g=$('#triggerGrid'); if(!g) return;
+  const b=$('#nav-trig'); if(b) b.textContent=triggers.length;
+  if(!triggers.length){ g.innerHTML=`<div class="empty" style="padding:34px;grid-column:1/-1">No triggers yet — click “Add trigger” to create one.</div>`; return; }
+  g.innerHTML='';
+  triggers.forEach(t=>{
+    const ty=triggerType(t.type)||{}; const p=pipelineById(t.pipelineId);
+    const card=el('div','panel reveal plat-card'+(t.enabled?'':' trig-off'));
+    card.innerHTML=`
+      <span class="pill plat-badge ${t.enabled?'done':''}" title="trigger type"><span class="ld"></span>${escapeHtml(ty.name||t.type)}</span>
+      <div class="plat-head">
+        <div class="plat-ic" style="color:var(--pbintra)"><i data-lucide="${ty.icon||'clock'}"></i></div>
+        <div style="flex:1;min-width:0"><div class="plat-name">${escapeHtml(t.name)}</div>
+          <div class="plat-note">${escapeHtml(ty.note||'')}</div></div>
+      </div>
+      <div class="plat-creds">
+        <div class="plat-cred"><span class="pk">Runs pipeline</span><span class="pv">${p?escapeHtml(p.name):'<span style="color:var(--amber)">(deleted pipeline)</span>'}</span></div>
+        <div class="plat-cred"><span class="pk">${t.type==='webhook'?'Endpoint':'Schedule'}</span><span class="pv mono">${escapeHtml(triggerSummary(t))}</span></div>
+        ${(t.type==='webhook'&&t.hook&&t.hook.secret)?`<div class="plat-cred"><span class="pk">Signed with</span><span class="pv mono">${escapeHtml(t.hook.secret)}</span></div>`:''}
+        <div class="plat-cred"><span class="pk">Debounce</span><span class="pv mono">${t.debounce!=null?t.debounce+'s':'30s'}</span></div>
+        <div class="plat-cred"><span class="pk">Status</span><span class="pv"><span class="trig-status ${t.enabled?'on':'off'}">${t.enabled?'Enabled':'Disabled'}</span></span></div>
+      </div>
+      <div class="plat-actions">
+        <button class="btn ghost sm trig-tog">${t.enabled?'Disable':'Enable'}</button>
+        <button class="btn ghost sm trig-edit">Edit</button>
+        <button class="btn ghost sm trig-del">Remove</button>
+      </div>`;
+    card.querySelector('.trig-tog').onclick=()=>{ t.enabled=!t.enabled; toast(t.name+(t.enabled?' enabled':' disabled')); renderTriggers(); };
+    card.querySelector('.trig-edit').onclick=()=>openDrawer('trigger', triggers.indexOf(t));
+    card.querySelector('.trig-del').onclick=()=>{ const i=triggers.indexOf(t); if(i>-1) triggers.splice(i,1); toast(t.name+' removed'); renderTriggers(); };
+    g.appendChild(card);
+  });
+  drawIcons();
+}
+
 /* ════════════════ docs (single-page "how it works", built from the real UI elements) ════════════════ */
 function renderDocs(){
   const kc={connector:'var(--cyan)',storage:'var(--amber)',runner:'var(--signal)',scorer:'var(--scorer)',subject:'var(--violet)',uploader:'var(--uploader)',pbintra:'var(--pbintra)'};
@@ -2542,11 +2647,22 @@ function renderDocs(){
       ])}
     </div>
 
+    ${H('Triggers','launch a pipeline automatically')}
+    <div class="panel reveal">
+      <p class="subtitle" style="margin-top:0">A <b>trigger</b> runs a pipeline on its own — you pick the <b>pipeline</b> it launches (always its <b>latest version</b> at fire time). Manage them under <b>Workspace → Triggers</b>: ${btn('+ Add trigger')}, pick a type, set its args. Each can be <b>disabled</b> (paused) or removed. Two types today:</p>
+      <div class="doc-kinds">
+        <div class="doc-kind"><div class="di" style="color:var(--pbintra)">${lu('clock','var(--pbintra)',20)}</div><div><div class="dt">Time-based</div><div class="dd">Fires on a schedule — an <b>interval</b> (every N minutes/hours/days), <b>once</b> at a fixed date/time (self-disables after), or <b>recurring</b> via a 5-field cron expression.</div></div></div>
+        <div class="doc-kind"><div class="di" style="color:var(--pbintra)">${lu('webhook','var(--pbintra)',20)}</div><div><div class="dt">Webhook</div><div class="dd">PBIntra mints a unique URL; any inbound <b>POST</b> starts a run. An optional <b>signing secret</b> makes it verify an <span class="mono">X-PBIntra-Signature</span> HMAC and reject unsigned calls.</div></div></div>
+      </div>
+      <div class="doc-note">A trigger is only a <b>launcher</b> — firing it creates a normal <b>Run</b> of the chosen pipeline (identical to the ${btn('Run','primary')} button), so run tokens, point-in-time snapshots and result reporting all behave the same. An <b>Advanced → Debounce</b> window (default <b>30s</b>) collapses rapid fires so bursty webhooks or overlapping schedules never spawn duplicate runs.</div>
+      <div class="doc-flow" style="margin-top:4px;flex-wrap:wrap">${lu('clock',kc.pbintra)} schedule / ${lu('webhook',kc.pbintra)} webhook <span class="fa">→</span> ${lu('play',kc.runner)} Run <span class="fa">→</span> ${lu('hexagon',kc.pbintra)} PBIntra</div>
+    </div>
+
     ${H('Wiring rules','what the builder enforces')}
     <div class="panel reveal">
       ${steps([
         `A ${tag('subject','subject')} wires only to a <b>compatible</b> ${tag('connector','connector')} — PBIntra refuses the rest.`,
-        `Into the ${tag('runner','runner')}: ${tag('storage','storage')} enters from the <b>top</b>, the ${tag('connector','connector')} from the <b>left</b>, ${tag('scorer','scorer')} from the <b>bottom</b> — and only the ones that runner declared compatible (many storages / scorers allowed). A <b>self-contained</b> runner (e.g. lm-eval, which loads its own data + scores internally) declares <b>none</b> and accepts no storage/scorer.`,
+        `Into the ${tag('runner','runner')}: ${tag('storage','storage')} enters from the <b>top</b>, the ${tag('connector','connector')} from the <b>left</b>, ${tag('scorer','scorer')} from the <b>bottom</b> — and only the ones that runner declared compatible (many storages / scorers allowed). <b>Storage and scorer are both optional</b>: wire in only what you need, and a <b>self-contained</b> runner (e.g. lm-eval, which loads its own data + scores internally) takes <b>neither</b>.`,
         `The runner's output → the ${lu('hexagon',kc.pbintra,13)} <b>PBIntra</b> hub → ${tag('uploader','uploader')}(s). Uploaders receive from the hub, never from the runner directly.`,
         `Change a node to something incompatible and the now-invalid wires are dropped automatically (with a toast).`,
       ])}
@@ -2635,6 +2751,7 @@ const HELP={
   shapes:{t:'Shapes',b:`<p><b>What.</b> Rendering rules for the schemaless entities (test case, response, score).</p><p><b>How.</b> PBIntra lists every distinct entity <b>shape</b> it has seen. For each, you design how it renders — map JSONPath fields to UI elements (text, badge, score-meter, audio, …) in rows/columns. Undefined shapes fall back to raw.</p><p><b>Why.</b> Runners emit free-form JSON, so no fixed schema exists. Shapes let humans decide how each observed structure should look — once — and every run follows it.</p>`},
   secrets:{t:'Secrets',b:`<p><b>What.</b> Named, encrypted credentials.</p><p><b>How.</b> Referenced by name from a subject's properties or a component's config; injected into the container at run time, never stored in the pipeline itself.</p><p><b>Why.</b> API keys and tokens must never live in plaintext in a run definition. Referencing by name keeps them out of shared artifacts.</p>`},
   results:{t:'Results & schemaless rendering',b:`<p><b>What.</b> The per-result view: each result is <code>{ testCase, response, score }</code> as free-form JSON.</p><p><b>How.</b> For each entity, if a <b>shape</b> is defined PBIntra renders it by that shape's rules (with a Shaped/Raw toggle); otherwise it shows raw JSON. The read-only pipeline above shows exactly which components produced the run.</p><p><b>Why.</b> No fixed schema means new runners work day one; shapes make their output readable without changing the engine.</p>`},
+  triggers:{t:'Triggers',b:`<p><b>What.</b> Automatic launchers for a pipeline. Two types today: <b>time-based</b> (fires on a schedule) and <b>webhook</b> (fires on an inbound HTTP request). Both run a <b>pipeline you choose</b> — its latest version at fire time.</p><p><b>How.</b> Click <b>Add trigger</b>, pick the type and the target pipeline, then set its args. Time-based: an <b>interval</b> (every N minutes/hours/days), a <b>once</b> fixed date/time, or a <b>recurring</b> cron expression. Webhook: PBIntra mints a unique URL — any POST to it starts a run (optionally HMAC-verified with a signing secret). <b>Disable</b> a trigger to pause it without deleting, or <b>Remove</b> it.</p><p><b>Why.</b> Backtesting is a day-after-day discipline — nightly schedules catch drift on their own, and webhooks let CI/CD or external events kick off a run right when something ships.</p>`},
 };
 
 function openDrawer(kind, editIdx){
@@ -2858,6 +2975,92 @@ function openDrawer(kind, editIdx){
       if(editing){ inst.name=name; inst.creds=creds; }
       else { const id=(isPlat?'pl'+(platSeq++):'cs'+(srcSeq++)); list.push({id, type:t.id, name, creds}); }
       rerender(); toast('✓ '+name+(editing?' updated':' added'));
+    };
+  }
+  if(kind==='trigger'){
+    // ADD = pick type + target pipeline + args; EDIT (editIdx set) = same but type is locked. See REAL-IMPL NOTE 20.
+    const inst=(editIdx!=null)?triggers[editIdx]:null; const editing=!!inst;
+    const curType=editing?inst.type:'time';
+    // defaults for whichever schedule mode the user picks (seed edit values so switching modes keeps prior input)
+    const sched=(editing&&inst.schedule)?inst.schedule:{mode:'interval',every:6,unit:'hours',cron:'0 2 * * *',at:''};
+    title=editing?('Edit '+inst.name):'Add trigger'; sub='pick a type · choose the pipeline it runs';
+    body=`
+      <div class="field"><label>Name</label><input id="tg_name" value="${editing?escapeHtml(inst.name):''}" placeholder="e.g. include_de nightly"></div>
+      <div class="field"><label>Trigger type</label>
+        <select id="tg_type" ${editing?'disabled':''}>${TRIGGER_TYPES.map(t=>`<option value="${t.id}" ${t.id===curType?'selected':''}>${escapeHtml(t.name)}</option>`).join('')}</select>
+        ${editing?'<div class="hint">Type can’t be changed after creating.</div>':''}</div>
+      <div class="field"><label>Run pipeline</label>
+        <select id="tg_pipe">${pipelines.map(p=>`<option value="${p.id}" ${editing&&inst.pipelineId===p.id?'selected':''}>${escapeHtml(p.name)}</option>`).join('')}</select>
+        <div class="hint">The pipeline this trigger launches. Fires the pipeline's <b>latest version</b> at run time.</div></div>
+      <div id="tg_body"></div>
+      <details class="adv"><summary>Advanced</summary>
+        <div class="field" style="margin-top:12px"><label>Debounce <span style="color:var(--fg-3);font-weight:400">· seconds</span></label>
+          <input id="tg_debounce" type="number" min="0" value="${editing&&inst.debounce!=null?inst.debounce:30}" style="max-width:120px">
+          <div class="hint">Collapse rapid fires — ignore a new fire within this many seconds of the last run. Guards against duplicate runs from bursty webhooks or overlapping schedules. Default <b>30s</b>; set <span class="mono">0</span> to disable.</div></div>
+      </details>
+      <label class="cad-sec" style="margin-top:8px"><input type="checkbox" id="tg_en" ${(!editing||inst.enabled)?'checked':''}> Enabled</label>`;
+    after=()=>{
+      const renderType=()=>{
+        const tp=$('#tg_type').value;
+        if(tp==='time'){
+          $('#tg_body').innerHTML=`
+            <div class="field"><label>Schedule</label>
+              <select id="tg_mode">
+                <option value="interval">Interval — every N …</option>
+                <option value="once">Once — at a fixed date/time</option>
+                <option value="recurring">Recurring — cron expression</option>
+              </select></div>
+            <div id="tg_sched"></div>`;
+          $('#tg_mode').value=sched.mode||'interval';
+          const renderSched=()=>{
+            const m=$('#tg_mode').value;
+            if(m==='interval'){
+              $('#tg_sched').innerHTML=`<div class="field"><label>Every</label>
+                <div style="display:flex;gap:8px"><input id="tg_every" type="number" min="1" value="${sched.every||6}" style="max-width:90px">
+                <select id="tg_unit"><option>minutes</option><option>hours</option><option>days</option></select></div></div>`;
+              $('#tg_unit').value=sched.unit||'hours';
+            } else if(m==='once'){
+              $('#tg_sched').innerHTML=`<div class="field"><label>Run at</label><input id="tg_at" type="datetime-local" value="${escapeHtml(sched.at||'')}">
+                <div class="hint">Fires exactly once, then the trigger disables itself.</div></div>`;
+            } else {
+              $('#tg_sched').innerHTML=`<div class="field"><label>Cron expression</label><input id="tg_cron" class="mono" value="${escapeHtml(sched.cron||'0 2 * * *')}" placeholder="0 2 * * *">
+                <div class="hint">Standard 5-field cron (min hour day-of-month month day-of-week). E.g. <span class="mono">0 2 * * *</span> = daily at 02:00.</div></div>`;
+            }
+          };
+          renderSched(); $('#tg_mode').onchange=renderSched;
+        } else {
+          // webhook: show the (generated) URL read-only + optional signing secret
+          const path=(editing&&inst.hook&&inst.hook.path)?inst.hook.path:'t/… (generated on save)';
+          $('#tg_body').innerHTML=`
+            <div class="field"><label>Webhook URL</label>
+              <input class="mono" value="https://hooks.pbintra.io/${escapeHtml(path)}" readonly>
+              <div class="hint">PBIntra mints this on save. Any HTTP <b>POST</b> to it launches the pipeline — share it with your CI or external system.</div></div>
+            <div class="field"><label>Signing secret <span style="color:var(--fg-3);font-weight:400">· optional</span></label>
+              <select id="tg_secret"><option value="">— none —</option>${secrets.map(s=>`<option ${editing&&inst.hook&&inst.hook.secret===s.name?'selected':''}>${escapeHtml(s.name)}</option>`).join('')}</select>
+              <div class="hint">If set, PBIntra verifies an <span class="mono">X-PBIntra-Signature</span> HMAC on each call and rejects unsigned requests.</div></div>`;
+        }
+      };
+      renderType();
+      if(!editing) $('#tg_type').onchange=renderType;
+    };
+    onsave=()=>{
+      const name=$('#tg_name').value.trim()||'untitled-trigger';
+      const type=$('#tg_type').value;
+      const patch={name, pipelineId:$('#tg_pipe').value, enabled:$('#tg_en').checked, debounce:Math.max(0,+($('#tg_debounce').value||0))};
+      if(type==='time'){
+        const mode=$('#tg_mode').value;
+        if(mode==='interval')      patch.schedule={mode, every:Math.max(1,+($('#tg_every').value||1)), unit:$('#tg_unit').value};
+        else if(mode==='once')     patch.schedule={mode, at:$('#tg_at').value};
+        else                       patch.schedule={mode, cron:($('#tg_cron').value||'').trim()||'0 2 * * *'};
+        delete patch.hook;
+      } else {
+        const path=(editing&&inst.hook&&inst.hook.path)?inst.hook.path:('t/'+Math.random().toString(16).slice(2,8));
+        patch.hook={path, secret:($('#tg_secret')?$('#tg_secret').value:'')||''};
+        delete patch.schedule;
+      }
+      if(editing){ if(patch.schedule===undefined) delete inst.schedule; if(patch.hook===undefined) delete inst.hook; Object.assign(inst,patch); }
+      else { triggers.push(Object.assign({id:'tg'+(trigSeq++), type}, patch)); }
+      renderTriggers(); toast('✓ '+name+(editing?' updated':' created'));
     };
   }
   if(kind==='secret'){
