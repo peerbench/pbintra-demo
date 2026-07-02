@@ -1647,7 +1647,7 @@ function renderDashboard(){
   rows.forEach((x,i)=>{
     const r=el('div','lb-row');
     r.innerHTML=`<div class="lb-rank">${i+1}</div>
-      <div class="lb-name"><div class="n">${escapeHtml(subjLabel(x.s))}</div><div class="e">${endpointOf(x.s)}</div></div>
+      <div class="lb-name"><div class="n">${escapeHtml(subjLabel(x.s))}</div><div class="e">${escapeHtml((x.s.connectors||[]).join(', ')||'—')}</div></div>
       <div style="width:120px">${x.sc==null?'<span style="font-family:var(--mono);font-size:10px;color:var(--fg-3)">no runs yet</span>':meter(x.sc)}</div>`;
     lb.appendChild(r);
   });
