@@ -86,7 +86,13 @@ body::after{
   border-right:1px solid var(--line);
   background:linear-gradient(180deg,var(--ink-2),var(--ink));
   display:flex;flex-direction:column;padding:22px 16px;gap:6px;
+  /* the .app grid caps this cell at 100vh — scroll internally when the nav is taller than the viewport (short screens) */
+  height:100vh;overflow-y:auto;overflow-x:hidden;
+  scrollbar-width:thin;scrollbar-color:var(--line-2) transparent;
 }
+.sidebar::-webkit-scrollbar{width:8px}
+.sidebar::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:8px}
+.sidebar::-webkit-scrollbar-track{background:transparent}
 .brand{display:flex;align-items:center;gap:11px;padding:6px 8px 22px}
 .brand .mark{
   width:38px;height:38px;border-radius:10px;flex:none;display:grid;place-items:center;
