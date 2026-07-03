@@ -484,25 +484,13 @@ details.adv[open]>summary::before{content:"▾ "}
 .node .nhead .del:hover{color:var(--red)}
 
 /* ─────────── dynamic property rows (subject form) ─────────── */
-.prop-row{display:grid;grid-template-columns:1fr 78px 1.1fr 32px;gap:7px;margin-bottom:8px;align-items:center}
+.prop-row{display:grid;grid-template-columns:1fr 72px 78px 1fr 32px;gap:6px;margin-bottom:8px;align-items:center}
 .prop-row input,.prop-row select{padding:9px 10px;font-size:12px;margin:0}
 .prop-del{cursor:pointer;color:var(--fg-3);text-align:center;border:1px solid var(--line);border-radius:7px;padding:9px 0;font-size:12px}
 .prop-del:hover{color:var(--red);border-color:var(--red)}
 .prop-row.req-row .pk{border-color:var(--signal-dim);box-shadow:inset 2px 0 0 var(--signal-dim)}
 .add-prop{font-family:var(--mono);font-size:11.5px;color:var(--signal-dim);cursor:pointer;border:1px dashed var(--line-2);border-radius:8px;padding:10px;text-align:center;display:block;margin-top:6px;transition:.15s}
 .add-prop:hover{color:var(--signal);border-color:var(--signal-dim)}
-/* subject drawer: connector eligibility list — a connector is only tickable once the subject has its required fields */
-.conn-list{display:flex;flex-direction:column;gap:6px}
-.conn-row{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:9px;padding:9px 11px;background:var(--ink-2)}
-.conn-row.disabled{opacity:.72;border-style:dashed}
-.conn-pick{display:flex;align-items:center;gap:8px;cursor:pointer;flex:none}
-.conn-row.disabled .conn-pick{cursor:not-allowed}
-.conn-pick input{margin:0}
-.conn-name{font-family:var(--mono);font-size:12.5px;color:var(--fg)}
-.conn-req{flex:1;min-width:0;font-size:11px;font-family:var(--mono);text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.conn-ok{color:var(--fg-3)}
-.conn-need{color:var(--amber)}
-.conn-add{flex:none;padding:5px 9px !important;font-size:10.5px !important}
 /* builder node config: one row per component-declared arg (name + type/req tags → value input) */
 .narg-row{margin-bottom:11px}
 .narg-row.req-row .narg-val{border-color:var(--signal-dim);box-shadow:inset 2px 0 0 var(--signal-dim)}
@@ -1184,18 +1172,22 @@ details.adv[open]>summary::before{content:"▾ "}
           forwards only to UPLOADERS; an uploader receives only from the hub, never the runner.
       Typed input ports have fixed sides on the runner (STORAGE top, CONNECTOR left, SCORER
       bottom; output right). Changing a node's component drops any edge that becomes invalid.
-   24. CONNECTORS DEFINE A SUBJECT'S REQUIRED FIELDS; COMPATIBILITY IS DERIVED FROM THEM. Each
-      connector declares the fields a subject must supply to be reachable through it (e.g. openai-api
-      → base_url[value,required], api_key[secret,required], model[value,optional]). A subject may
-      declare a connector as COMPATIBLE **only if it HAS all of that connector's REQUIRED fields**
-      (as properties with a value); otherwise that connector is NOT selectable for the subject. So
-      compatibility is not a free choice — it is gated by the subject's properties. The subject
-      editor reflects this: the connector list disables connectors whose required fields are missing
-      and shows which ones (`needs …`), with a "+ add its fields" action that appends those required
-      fields to the subject's properties (empty, to fill) — bridging the chicken-and-egg. Removing a
-      property that a compatible connector required auto-drops that connector's compatibility. This
-      is why identity = name + properties (NOTE 1): the connector-required config IS the subject.
-      PBIntra itself stays schemaless — the connector's field list is the only schema hint.
+   24. CONNECTORS DECLARE EXPECTED SUBJECT FIELDS (name + TYPE); COMPATIBILITY IS DERIVED. Each
+      connector COMPONENT stores `subjectFields`: a list of {name, type} the connector needs from a
+      subject (type ∈ string | number | boolean | json) — edited in the connector's add/edit drawer.
+      A subject PROPERTY carries a matching data `type` alongside its value/secret `kind`. A subject
+      is compatible with a connector only if, for EVERY expected field, it has a property with the
+      same NAME and the same TYPE (with a value). There is no required/optional distinction — every
+      declared field is needed. So compatibility is gated by the subject's properties, not a free
+      choice. The subject editor uses a normal multi-select for compatible connectors; picking a
+      connector the subject doesn't yet satisfy opens a DIALOG that (a) adds the missing fields to
+      the subject's properties (with the declared type, empty value to fill) and (b) FLAGS any field
+      that already exists with a DIFFERENT type — those the user must fix by hand (a type conflict
+      blocks compatibility). Removing/renaming a property or changing its type re-checks all chosen
+      connectors and silently drops any that no longer qualify. This is why identity = name +
+      properties (NOTE 1): the connector-expected config IS the subject. PBIntra stays schemaless —
+      the connector's field list is the only schema hint. (kind value/secret is orthogonal — the
+      connector cares only about name+type, not whether the value is a literal or a secret.)
    25. SCHEMALESS RESULTS + SHAPES. A result is free-form JSON { testCase, response, score };
       PBIntra assumes NO field names. A SHAPE is a user-defined RENDERING RULE for one distinct
       structure — a structure's identity is the full RECURSIVE set of its keys+types (order-
@@ -1274,7 +1266,7 @@ let subjects = [
    meta:[{key:'owner',value:'alteos'},{key:'region',value:'eu-central'}]},
   {id:'c',name:'gemini-2-0-flash',score:85,trend:[78,79,81,80,82,83,82,84,83,85,84,86,85,85],
    connectors:['openai-api','vertex-gemini'],
-   properties:[{key:'base_url',kind:'value',value:'generativelanguage.googleapis.com'},{key:'model',kind:'value',value:'gemini-2.0-flash'},{key:'api_key',kind:'secret',value:'GOOGLE_AI_KEY'},{key:'project_id',kind:'value',value:'alteos-benchmarks'},{key:'location',kind:'value',value:'europe-west3'},{key:'service_account',kind:'secret',value:'GCP_SA_JSON'}]},
+   properties:[{key:'base_url',kind:'value',value:'generativelanguage.googleapis.com'},{key:'model',kind:'value',value:'gemini-2.0-flash'},{key:'api_key',kind:'secret',value:'GOOGLE_AI_KEY'},{key:'project_id',kind:'value',value:'alteos-benchmarks'},{key:'location',kind:'value',value:'europe-west3'},{key:'service_account',kind:'secret',type:'json',value:'GCP_SA_JSON'}]},
   {id:'d',name:'franzi-voice-bot',score:82,trend:[74,76,75,78,77,79,80,79,81,80,82,81,83,82],
    connectors:['stateful-chat','livekit-voice'],
    properties:[{key:'endpoint',kind:'value',value:'livekit.alteos.com/voice/franzi'},{key:'session_token',kind:'secret',value:'ALTEOS_AGENT_TOKEN'},{key:'livekit_url',kind:'value',value:'wss://livekit.alteos.com'},{key:'api_key',kind:'secret',value:'LIVEKIT_API_KEY'},{key:'api_secret',kind:'secret',value:'LIVEKIT_API_SECRET'},{key:'voice_id',kind:'value',value:'franzi-de'}]},
@@ -1371,13 +1363,33 @@ let components = [
 // they stay reproducible — this REPLACES the old "keep in sync with source" opt-out. See REAL-IMPL NOTE 13/16/21/29.
 // The entity's FLAT fields (c.img/c.args/…, s.connectors/s.properties) always mirror its LATEST version's def.
 function compDef(c){ return {img:c.img, source:c.source, args:JSON.parse(JSON.stringify(c.args||[])),
-  connectors:c.connectors?[...c.connectors]:undefined, storages:c.storages?[...c.storages]:undefined, scorers:c.scorers?[...c.scorers]:undefined}; }
+  connectors:c.connectors?[...c.connectors]:undefined, storages:c.storages?[...c.storages]:undefined, scorers:c.scorers?[...c.scorers]:undefined,
+  subjectFields:c.subjectFields?JSON.parse(JSON.stringify(c.subjectFields)):undefined}; }
 function subjDef(s){ return {connectors:[...(s.connectors||[])], properties:JSON.parse(JSON.stringify(s.properties||[]))}; }
 // stable behavioural signature → equal sig means an edit is name/desc-only, so it does NOT bump the version
 function subjExecSig(s){ const d=subjDef(s); return JSON.stringify({c:[...d.connectors].sort(), p:d.properties}); }
 // resolve the behavioural def pinned at a version number (fallback = current flat def)
 function compDefAt(c, ver){ const v=((c&&c.versions)||[]).find(x=>x.version===ver); return v?v.def:compDef(c); }
 function subjDefAt(s, ver){ const v=((s&&s.versions)||[]).find(x=>x.version===ver); return v?v.def:subjDef(s); }
+// A CONNECTOR declares the fields it expects from a subject (name + data TYPE), edited in its add/edit drawer and stored
+// on the connector COMPONENT as `subjectFields`. A subject is compatible with a connector only if it HAS every one of
+// these fields in the MATCHING type (REAL-IMPL NOTE 24). Seed the built-in connectors here, then attach at load.
+const CONNECTOR_SUBJECT_FIELDS={
+  'openai-api':[{name:'base_url',type:'string'},{name:'api_key',type:'string'},{name:'model',type:'string'}],
+  'anthropic':[{name:'api_key',type:'string'},{name:'model',type:'string'}],
+  'vertex-gemini':[{name:'project_id',type:'string'},{name:'location',type:'string'},{name:'model',type:'string'},{name:'service_account',type:'json'}],
+  'stateful-chat':[{name:'endpoint',type:'string'},{name:'session_token',type:'string'}],
+  'playwright-rpa':[{name:'target_url',type:'string'},{name:'selectors_profile',type:'string'}],
+  'livekit-voice':[{name:'livekit_url',type:'string'},{name:'api_key',type:'string'},{name:'api_secret',type:'string'}],
+  'mastra':[{name:'base_url',type:'string'}],
+  'mastra-agent':[{name:'base_url',type:'string'},{name:'agent_id',type:'string'}],
+};
+components.filter(c=>c.kind==='connector').forEach(c=>{ if(!c.subjectFields) c.subjectFields=(CONNECTOR_SUBJECT_FIELDS[c.name]||[]).map(f=>({...f})); });
+// the expected fields of a connector by name (its component's subjectFields; [] for a connector that declares none)
+function connFields(name){ return ((components.find(c=>c.name===name)||{}).subjectFields)||[]; }
+// every subject property carries a data TYPE (string/number/boolean/json) — the connector-compat check matches name+type.
+// default legacy/seed props (that don't set one) to 'string'. Runs BEFORE version init so subjDef captures the type.
+subjects.forEach(s=>(s.properties||[]).forEach(p=>{ if(!p.type) p.type='string'; }));
 // seed: give every component/subject a v1 capturing its ORIGINAL behavioural def (before any edit is possible)
 components.forEach(c=>{ if(!c.versions){ c.version=1; c.versions=[{version:1,createdAt:'—',note:'initial',def:compDef(c)}]; } });
 subjects.forEach(s=>{ if(!s.versions){ s.version=1; s.versions=[{version:1,createdAt:'—',note:'initial',def:subjDef(s)}]; } });
@@ -1447,17 +1459,7 @@ function scalarFrameHtml(spec, dark){
 
 // The system records every DISTINCT entity shape it has seen in past runs (schemaless → many shapes).
 // Each carries an observed sample + a (possibly empty) rendering rule. Empty rule = "rendering undefined".
-// a connector's API schema demands these config fields from every subject that uses it (union across selected connectors)
-const connectorFields={
-  'openai-api':[{key:'base_url',kind:'value',required:true},{key:'api_key',kind:'secret',required:true},{key:'model',kind:'value',required:false}],
-  'anthropic':[{key:'api_key',kind:'secret',required:true},{key:'model',kind:'value',required:true}],
-  'vertex-gemini':[{key:'project_id',kind:'value',required:true},{key:'location',kind:'value',required:true},{key:'model',kind:'value',required:true},{key:'service_account',kind:'secret',required:true}],
-  'stateful-chat':[{key:'endpoint',kind:'value',required:true},{key:'session_token',kind:'secret',required:true}],
-  'playwright-rpa':[{key:'target_url',kind:'value',required:true},{key:'selectors_profile',kind:'value',required:true}],
-  'livekit-voice':[{key:'livekit_url',kind:'value',required:true},{key:'api_key',kind:'secret',required:true},{key:'api_secret',kind:'secret',required:true}],
-  'mastra':[{key:'base_url',kind:'value',required:true},{key:'api_key',kind:'secret',required:false}],
-  'mastra-agent':[{key:'base_url',kind:'value',required:true},{key:'agent_id',kind:'value',required:true},{key:'api_key',kind:'secret',required:false}],
-};
+// (connector→subject expected fields now live on each connector component as `subjectFields`; see CONNECTOR_SUBJECT_FIELDS + connFields above)
 const ENTITY_LABEL={testCase:'Test Case', response:'Response', score:'Score'};
 const EL_TYPES=['text','heading','paragraph','badge','number','score-meter','date','image','video','audio','link','code','tags','boolean'];
 // a rendering rule = rows[] of columns[]; each column is one field {path, el}. empty rows = undefined.
@@ -1711,7 +1713,22 @@ function componentExecSig(c){
     kind:c.kind, img:c.img||'', source:c.source||'',
     args:(c.args||[]).map(a=>({name:a.name,type:a.type,req:a.req,default:a.default,secret:!!a.secret})),
     connectors:c.connectors||null, storages:c.storages||null, scorers:c.scorers||null,
+    subjectFields:(c.subjectFields||[]).map(f=>({name:f.name,type:f.type})),
   });
+}
+// does a subject (its properties) satisfy connector `cn`'s expected fields? Returns {ok, missing:[{name,type}],
+// conflicts:[{name, have, need}]}. A property satisfies a field when it shares the NAME and the same data TYPE (NOTE 24).
+function subjectConnCheck(props, cn){
+  const byKey={}; (props||[]).forEach(p=>{ if(p.key) byKey[p.key]=p; });
+  const missing=[], conflicts=[];
+  // compatibility = the subject HAS a property of the same name+type. Value-emptiness is NOT part of compat (a field can
+  // exist but be unfilled during editing); the onsave path drops empty-value properties, so an unfilled field there
+  // simply isn't present. Type MISMATCH (name matches, type differs) is a conflict the user must fix by hand.
+  connFields(cn).forEach(f=>{ const p=byKey[f.name];
+    if(!p) missing.push({name:f.name,type:f.type});
+    else if((p.type||'string')!==f.type) conflicts.push({name:f.name, have:(p.type||'string'), need:f.type});
+  });
+  return {ok:!missing.length && !conflicts.length, missing, conflicts};
 }
 // shared renderer: a list of component names as clickable links to their detail (lowercase, per-kind colour).
 // Used by BOTH the runner detail (Compatible connectors/storages/scorers) AND the subject detail (Compatible connectors).
@@ -2646,9 +2663,9 @@ function openSubject(id){
   const sdef=subjDefAt(s, selVer);
   // subject metadata: extra, identity-neutral info shown as a plain key/value table
   const metaKv=(s.meta||[]).map(m=>`<tr><td>${escapeHtml(m.key)}</td><td><span class="mono" style="color:var(--fg-2)">${escapeHtml(m.value)}</span></td></tr>`).join('');
-  const props=(sdef.properties||[]).map(p=>`<tr><td>${p.key}</td><td>${p.kind==='secret'
-    ?`<span class="tag" style="color:var(--amber);border-color:rgba(245,177,61,.3)">secret</span> <span class="mono" style="color:var(--fg-2)">${p.value}</span>`
-    :`<span class="mono" style="color:var(--fg)">${p.value}</span>`}</td></tr>`).join('');
+  const props=(sdef.properties||[]).map(p=>`<tr><td>${escapeHtml(p.key)} <span class="atag ty" style="text-transform:none">${escapeHtml(p.type||'string')}</span></td><td>${p.kind==='secret'
+    ?`<span class="tag" style="color:var(--amber);border-color:rgba(245,177,61,.3)">secret</span> <span class="mono" style="color:var(--fg-2)">${escapeHtml(p.value)}</span>`
+    :`<span class="mono" style="color:var(--fg)">${escapeHtml(p.value)}</span>`}</td></tr>`).join('');
   const svRow=v=>`<tr class="ver-row${v.version===selVer?' sel':''}" style="cursor:pointer" onclick="selectSubjectVersion('${s.id}',${v.version})">
       <td><b>v${v.version}</b>${v.version===(s.version||1)?' <span class="tag" style="color:var(--pbintra);border-color:rgba(62,207,142,.35)">current</span>':''}</td>
       <td><span class="mono" style="color:var(--fg-3)">${v.createdAt}${v.note&&v.note!=='current'?' · '+escapeHtml(v.note):''}</span></td>
@@ -2722,6 +2739,7 @@ function openComponent(idx){
       ${vdef.source?`<tr><td>Container source</td><td><span class="mono" style="color:var(--fg-2)">${escapeHtml(containerSourceLabel(vdef.source))}</span> <span style="color:var(--fg-3);font-size:11px">· private registry</span></td></tr>`:''}
       ${spec?`<tr><td>API schema</td><td>uploaded OpenAPI · <span class="mono" style="color:var(--fg-2)">${escapeHtml((c.openapi.info&&c.openapi.info.title)||'Uploaded API')}</span></td></tr>`:''}
       ${c.kind==='runner'?compRow('Compatible connectors',vdef.connectors,'connector')+compRow('Compatible storages',vdef.storages,'storage')+compRow('Compatible scorers',vdef.scorers,'scorer'):''}
+      ${c.kind==='connector'?`<tr><td>Expected subject fields</td><td>${(vdef.subjectFields||[]).length?(vdef.subjectFields).map(f=>`<span class="atag ty" style="text-transform:none">${escapeHtml(f.name)} : ${escapeHtml(f.type)}</span>`).join(' '):'<span style="color:var(--fg-3)">none — compatible with any subject</span>'}</td></tr>`:''}
     </table></div>`;
   // configurable args this component declares (REAL-IMPL NOTE 10) — the user fills these in when building a pipeline
   const argRow=a=>{
@@ -3055,8 +3073,8 @@ function renderDocs(){
       <div class="doc-sub">Add a subject</div>
       ${steps([
         `Open <b>Subjects</b> in the sidebar, click ${btn('+ Add subject')}.`,
-        `Add its <b>properties</b> (each a <b>value</b> or a <b>secret</b> reference). A connector becomes <b>selectable</b> only once the subject has all the fields that connector requires — use ${btn('+ add its fields','ghost')} on a connector to add its required fields, then fill them.`,
-        `Tick the <b>compatible connectors</b> (only the eligible ones), add any <b>metadata</b>, then ${btn('Save')}.`,
+        `Add its <b>properties</b> — each has a <b>type</b> (string/number/boolean/json) and a <b>value</b> or <b>secret</b>. A connector expects certain fields by <b>name + type</b>.`,
+        `Pick the <b>compatible connectors</b> from the multi-select; if the subject is missing a connector's fields a <b>dialog</b> offers to add them (and flags any type mismatch). Add <b>metadata</b>, then ${btn('Save')}.`,
       ])}
     </div>
 
@@ -3235,9 +3253,9 @@ function confirmDialog(opts){
 }
 const HELP={
   dashboard:{t:'Dashboard',b:`<p><b>What.</b> The at-a-glance health view of your backtesting workspace.</p><p><b>How.</b> It aggregates every result across runs — average quality, per-subject leaderboard, a quality-over-time chart, and recent runs — all computed from the same in-memory data the other pages write to.</p><p><b>Why.</b> Backtesting is about tracking quality <i>day by day</i>; this is where regressions and improvements surface first.</p>`},
-  subjects:{t:'Subjects',b:`<p><b>What.</b> The things under test — any model or agent at a remote endpoint. There is <b>no LLM/agent type</b>: a subject is just a <b>name + properties</b>.</p><p><b>How.</b> Properties (base_url, model, api_key, …) are each bound to a stored <b>secret</b> or a literal value. Each <b>connector</b> declares the fields it needs; a subject can be marked compatible with a connector <b>only once it has all that connector's required fields</b> — otherwise the connector isn't selectable.</p><p><b>Versioned.</b> Like components &amp; pipelines, a subject is <b>versioned</b>: changing its properties or compatible connectors makes a new version; a name/display-name/metadata edit does not. A pipeline pins a specific subject version.</p><p><b>Why.</b> Subjects are what you score. Free-form property bags (not fixed fields, no type) let any model or agent be tested the same way. Identity = name + properties (metadata excluded).</p>`},
+  subjects:{t:'Subjects',b:`<p><b>What.</b> The things under test — any model or agent at a remote endpoint. There is <b>no LLM/agent type</b>: a subject is just a <b>name + properties</b>.</p><p><b>How.</b> Properties (base_url, model, api_key, …) each have a <b>type</b> (string/number/boolean/json) and are bound to a stored <b>secret</b> or a literal value. Each <b>connector</b> declares the fields it expects by <b>name + type</b>; a subject is compatible with a connector only if it has all those fields in the matching type — picking one it's missing pops a dialog to add them.</p><p><b>Versioned.</b> Like components &amp; pipelines, a subject is <b>versioned</b>: changing its properties or compatible connectors makes a new version; a name/display-name/metadata edit does not. A pipeline pins a specific subject version.</p><p><b>Why.</b> Subjects are what you score. Free-form property bags (not fixed fields, no type) let any model or agent be tested the same way. Identity = name + properties (metadata excluded).</p>`},
   components:{t:'Components',b:`<p><b>What.</b> The container images PBIntra orchestrates. Six kinds: <b>connector</b>, <b>storage</b>, <b>runner</b>, <b>scorer</b>, <b>uploader</b> — plus a special <b>scout</b> (not wired into a pipeline).</p><p><b>How.</b> A component is just a prebuilt image URL plus a name (its DB id). It may declare <b>configurable arguments</b> (each required, optional, or optional-with-default — and a default may be a secret); the user fills these in when placing the component in a pipeline. An <b>API schema is optional</b> — upload an OpenAPI spec to document the component (rendered on its detail page); leave it out and nothing is shown. There is no default schema.</p><p><b>Versioned.</b> Like pipelines, a component is <b>versioned</b>: every behavioural edit (image/args/source/compatibility) makes a new version; a name/description edit does not. Its detail page lists all versions, and a pipeline pins a specific one.</p><p><b>Why.</b> Everything is a container so anyone can extend the platform — publish an image that speaks the contract and it plugs in, no core changes.</p>`},
-  connector:{t:'Connector',b:`<p><b>What.</b> The container that lets PBIntra <b>talk to a subject</b> — the adapter at the end of the wire.</p><p><b>How.</b> It exposes an OpenAI-compatible API (<code>/v1/chat/completions</code>). The runner sends a test case to the connector, which calls the actual subject and returns the response.</p><p><b>Why.</b> Subjects speak many protocols; the connector normalizes them behind one schema so the runner never needs subject-specific code. Only compatible connectors can wire to a subject.</p>`},
+  connector:{t:'Connector',b:`<p><b>What.</b> The container that lets PBIntra <b>talk to a subject</b> — the adapter at the end of the wire.</p><p><b>How.</b> It exposes an OpenAI-compatible API (<code>/v1/chat/completions</code>). The runner sends a test case to the connector, which calls the actual subject and returns the response. A connector also declares the <b>fields it expects from a subject</b> (name + type) in its add/edit drawer — a subject is compatible only if it has those fields in the matching type.</p><p><b>Why.</b> Subjects speak many protocols; the connector normalizes them behind one schema so the runner never needs subject-specific code. Only compatible connectors can wire to a subject.</p>`},
   storage:{t:'Storage',b:`<p><b>What.</b> The container that <b>finds and serves test cases</b> to the runner.</p><p><b>How.</b> It exposes <code>/api/testcases</code> (all), <code>/api/testcases/next</code> (cursor/foreach) and <code>/api/testcases/count</code>. Source can be a HuggingFace dataset, S3, Postgres, anything.</p><p><b>Why.</b> Decoupling the data source from the run means the same pipeline can be pointed at any dataset by swapping one container.</p>`},
   runner:{t:'Runner',b:`<p><b>What.</b> The <b>orchestrator</b> that drives one run.</p><p><b>How.</b> It pulls test cases from storage (possibly <b>several</b> storages), sends each to subjects through the connector, then hands responses to the scorer(s). It also receives each subject's <b>metadata</b> (owner, tier, region…) so it can use it if needed. It assembles <code>{ testCase, response, score }</code> and <b>reports each result to the PBIntra hub</b>.</p><p><b>Why.</b> Centralizing the loop in one container keeps connectors/storages/scorers simple and single-purpose. A runner is outbound-only (nothing calls it), so it never needs its own API schema.</p>`},
   pbintra:{t:'PBIntra (hub)',b:`<p><b>What.</b> The platform itself, drawn as a node — the <b>results hub</b> every run lands in. Not a container you pick; it's always present and can't be removed.</p><p><b>How.</b> The <b>runner reports every result to PBIntra</b> (always). From here, results are stored and shown in the app. Optionally, PBIntra then <b>forwards each result to uploaders</b> — so uploaders wire off <i>this</i> node, never off the runner directly.</p><p><b>Why.</b> Making the hub explicit shows the true data flow: compute finishes at the runner, results always come home to PBIntra, and export is a separate, optional next step.</p>`},
@@ -3272,10 +3290,10 @@ function openDrawer(kind, editIdx){
       <div class="field"><label>Properties</label>
         <div id="propRows"></div>
         <span class="add-prop" id="addProp">+ add property</span>
-        <div class="hint">The subject's fields — each bound to a <b>secret</b> or a literal <b>value</b>. A connector below only becomes <b>selectable</b> once the subject has all the fields that connector requires.</div></div>
+        <div class="hint">The subject's fields — each has a <b>type</b> (string/number/boolean/json) and is bound to a literal <b>value</b> or a <b>secret</b>. A connector expects certain fields <b>by name + type</b>; the subject is compatible only if it has them.</div></div>
       <div class="field"><label>Compatible connectors</label>
-        <div id="connList" class="conn-list"></div>
-        <div class="hint">Each connector declares the fields it needs from a subject. Tick the connectors this subject can be tested through — <b>only those whose required fields the subject already has</b> are selectable. Use <b>+ add its fields</b> to add a connector's required fields to Properties above, then fill them.</div></div>
+        <select id="compatSelect" multiple placeholder="Select connector containers…">${components.filter(c=>c.kind==='connector').map(c=>`<option value="${escapeHtml(c.name)}" ${es&&(es.connectors||[]).includes(c.name)?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}</select>
+        <div class="hint">The connectors this subject can be tested through (it can wire only to these in a run). Picking a connector whose <b>expected fields</b> the subject is missing opens a dialog to add them; removing a required property drops that connector automatically.</div></div>
       <div class="field"><label>Metadata <span style="text-transform:none;letter-spacing:0;color:var(--fg-3)">· optional</span></label>
         <div id="metaRows"></div>
         <span class="add-prop" id="addMeta">+ add metadata</span>
@@ -3283,46 +3301,49 @@ function openDrawer(kind, editIdx){
     after=()=>{
       // subject name is the DB id → allow only [A-Za-z0-9_-], strip anything else live (same rule as components)
       $('#f_name').addEventListener('input',e=>{ e.target.value=e.target.value.replace(/[^A-Za-z0-9_-]/g,''); });
-      // Compatibility is DERIVED from properties (REAL-IMPL NOTE 24): a connector is only selectable once the subject
-      // HAS all the fields that connector requires. `chosen` holds the ticked connectors; a connector that loses its
-      // required fields is auto-unticked. Properties are user-driven now (no more auto-load on connector select).
-      const chosen=new Set((es&&es.connectors)||[]);
-      const pr=$('#propRows'); (es?.properties||[]).forEach(p=>pr.appendChild(propRowEl(p.key,p.kind,p.value,false)));
-      // current property keys that have a non-empty value → what the subject "has"
-      const haveKeys=()=>{ const have={}; $$('#propRows .prop-row').forEach(r=>{ const k=r.querySelector('.pk')?.value.trim(); const ve=r.querySelector('.pv'); const v=ve?ve.value.trim():''; if(k) have[k]=have[k]||(v!==''); }); return have; };
-      const renderConnList=()=>{
-        const have=haveKeys(); const box=$('#connList'); if(!box) return; box.innerHTML='';
-        const conns=components.filter(c=>c.kind==='connector');
-        if(!conns.length){ box.innerHTML='<div class="empty" style="padding:12px;font-size:12px">no connector components registered</div>'; return; }
-        conns.forEach(c=>{
-          const reqs=(connectorFields[c.name]||[]).filter(f=>f.required);
-          const missing=reqs.filter(f=>!have[f.key]).map(f=>f.key);
-          const ok=missing.length===0;
-          if(!ok && chosen.has(c.name)) chosen.delete(c.name);   // property removed/emptied → drop compatibility
-          const row=el('div','conn-row'+(ok?'':' disabled'));
-          const needTxt = ok
-            ? `<span class="conn-ok">✓ ${reqs.length?'requires '+reqs.map(f=>escapeHtml(f.key)).join(', '):'no required fields'}</span>`
-            : `<span class="conn-need">needs ${missing.map(escapeHtml).join(', ')}</span>`;
-          row.innerHTML=`<label class="conn-pick"><input type="checkbox" ${chosen.has(c.name)?'checked':''} ${ok?'':'disabled'}><span class="conn-name comp-link connector" style="cursor:default;border:none">${escapeHtml(c.name)}</span></label>
-            <span class="conn-req">${needTxt}</span>
-            ${ok?'':`<button type="button" class="btn ghost sm conn-add">+ add its fields</button>`}`;
-          const cb=row.querySelector('input'); cb.onchange=()=>{ if(cb.checked) chosen.add(c.name); else chosen.delete(c.name); };
-          const add=row.querySelector('.conn-add'); if(add) add.onclick=()=>addConnFields(c.name);
-          box.appendChild(row);
+      const pr=$('#propRows'); (es?.properties||[]).forEach(p=>pr.appendChild(propRowEl(p.key,p.kind,p.value,false,p.type||'string')));
+      // read the subject's CURRENT properties (with types) straight from the DOM — the compat check runs against these
+      const readProps=()=>[...$$('#propRows .prop-row')].map(r=>{ const ve=r.querySelector('.pv');
+        return {key:r.querySelector('.pk')?.value.trim()||'', kind:r.querySelector('.pkind').value, type:r.querySelector('.ptype').value, value:ve?(ve.value||'').trim():''}; }).filter(p=>p.key);
+      let ts=null;   // the TomSelect instance (multi-select of compatible connectors, like the runner's compat selects)
+      const selected=()=> ts ? ts.getValue() : [...($('#compatSelect').selectedOptions)].map(o=>o.value);
+      const deselect=cn=>{ if(ts) ts.removeItem(cn, true); else { const o=[...$('#compatSelect').options].find(x=>x.value===cn); if(o) o.selected=false; } };
+      // Compatibility (NOTE 24): a subject may keep a connector only if it HAS every field that connector expects, in the
+      // matching TYPE. Adding a connector the subject doesn't satisfy opens a dialog to add the missing fields (and to
+      // FLAG any that exist with a different type — those the user must fix by hand). Removing/renaming a required
+      // property re-checks all selected connectors and silently drops any that no longer qualify.
+      const addMissingFields=miss=>{ const existing=new Set([...$$('#propRows .prop-row')].map(r=>r.querySelector('.pk')?.value.trim()).filter(Boolean));
+        miss.forEach(f=>{ if(!existing.has(f.name)) $('#propRows').appendChild(propRowEl(f.name,'value','',true,f.type)); }); };
+      const onPick=cn=>{
+        const chk=subjectConnCheck(readProps(), cn);
+        if(chk.ok) return;   // already satisfied → just keep it selected
+        // build the dialog body: fields to add + any type conflicts to inform about
+        const addList=chk.missing.map(f=>`<span class="cfm-chip">${escapeHtml(f.name)} <span style="color:var(--fg-3)">: ${escapeHtml(f.type)}</span></span>`).join('');
+        const conflictList=chk.conflicts.map(f=>`<span class="cfm-chip" style="border-color:rgba(245,177,61,.5)">${escapeHtml(f.name)} <span style="color:var(--amber)">has ${escapeHtml(f.have)} → needs ${escapeHtml(f.need)}</span></span>`).join('');
+        confirmDialog({
+          title:`Make subject compatible with ${cn}?`,
+          confirmLabel: chk.missing.length?'Add fields':'OK',
+          bodyHtml:`<p><b>${escapeHtml(cn)}</b> expects fields the subject doesn't have yet.</p>
+            ${chk.missing.length?`<div style="margin:8px 0 4px;font-size:12px;color:var(--fg-2)">These will be <b>added</b> to Properties (fill their values):</div><div class="cfm-list">${addList}</div>`:''}
+            ${chk.conflicts.length?`<div class="cfm-warn" style="margin-top:12px">A field exists with a <b>different type</b> — fix it yourself, then re-select the connector:</div><div class="cfm-list">${conflictList}</div>`:''}`,
+          onConfirm:()=>{ addMissingFields(chk.missing);
+            // after adding, if it's fully satisfied keep it; otherwise (type conflicts remain) drop the selection
+            if(subjectConnCheck(readProps(), cn).ok){ toast(cn+' — fields added, now compatible'); }
+            else { deselect(cn); toast('⚠ Fix the type conflicts, then re-select '+cn); }
+          },
+          onCancel:()=>deselect(cn),
         });
       };
-      // add a connector's required fields (that aren't already present) to Properties, then re-check eligibility
-      const addConnFields=name=>{
-        const existing=new Set([...$$('#propRows .prop-row')].map(r=>r.querySelector('.pk')?.value.trim()).filter(Boolean));
-        (connectorFields[name]||[]).forEach(f=>{ if(!existing.has(f.key)) $('#propRows').appendChild(propRowEl(f.key,f.kind,'',f.required)); });
-        renderConnList();
-      };
-      // any property edit (type/value/key) or row removal re-computes which connectors are eligible, live
-      pr.addEventListener('input', renderConnList);
-      pr.addEventListener('change', renderConnList);
-      pr.addEventListener('click', e=>{ if(e.target.classList.contains('prop-del')) setTimeout(renderConnList,0); });
-      $('#addProp').onclick=()=>{ $('#propRows').appendChild(propRowEl()); renderConnList(); };
-      renderConnList();
+      // drop any selected connector the current properties no longer satisfy (property removed / value cleared / type changed)
+      const revalidate=()=>{ const props=readProps(); selected().forEach(cn=>{ if(!subjectConnCheck(props, cn).ok){ deselect(cn); toast('⚠ '+cn+' no longer compatible — required field changed'); } }); };
+      if(window.TomSelect && $('#compatSelect')){
+        ts=new TomSelect('#compatSelect',{plugins:['remove_button'],persist:false,create:false,hideSelected:true,maxOptions:null});
+        ts.on('item_add',(val)=>{ setTimeout(()=>onPick(val),0); });   // defer so TomSelect finishes its own state update first
+      } else if($('#compatSelect')){ $('#compatSelect').onchange=()=>{ const cur=selected(); const last=cur[cur.length-1]; if(last) onPick(last); }; }
+      pr.addEventListener('input', revalidate);
+      pr.addEventListener('change', revalidate);
+      pr.addEventListener('click', e=>{ if(e.target.classList.contains('prop-del')) setTimeout(revalidate,0); });
+      $('#addProp').onclick=()=>{ $('#propRows').appendChild(propRowEl()); };
       const mr=$('#metaRows'); (es?.meta||[]).forEach(m=>mr.appendChild(metaRowEl(m.key,m.value)));
       $('#addMeta').onclick=()=>$('#metaRows').appendChild(metaRowEl());
     };
@@ -3332,14 +3353,11 @@ function openDrawer(kind, editIdx){
       const properties=[...$('#propRows').children].filter(r=>r.querySelector('.pk')).map(r=>({
         key:(r.querySelector('.pk').value.trim()||'prop'),
         kind:r.querySelector('.pkind').value,
+        type:r.querySelector('.ptype').value,
         value:r.querySelector('.pv').value.trim(),
       })).filter(p=>p.value);
-      // a connector is only compatible if the subject HAS all its required fields (REAL-IMPL NOTE 24): keep the ticked
-      // rows, but drop any whose requirements the final properties don't satisfy (belt-and-braces on top of the live UI).
-      const have={}; properties.forEach(p=>{ have[p.key]=true; });
-      const connectors=[...$$('#connList .conn-row')].filter(r=>{ const cb=r.querySelector('input'); return cb&&cb.checked; })
-        .map(r=>r.querySelector('.conn-name').textContent)
-        .filter(cn=>(connectorFields[cn]||[]).filter(f=>f.required).every(f=>have[f.key]));
+      // connectors from the multi-select, filtered to those the FINAL properties actually satisfy (name+type) — NOTE 24
+      const connectors=[...$('#compatSelect').selectedOptions].map(o=>o.value).filter(cn=>subjectConnCheck(properties, cn).ok);
       const meta=[...$('#metaRows').children].map(r=>({key:r.querySelector('.mk').value.trim(), value:r.querySelector('.mv').value.trim()})).filter(m=>m.key);
       if(es){
         // BEHAVIOURAL edit (connectors/properties changed) → new version; name/display/metadata edits stay in place.
@@ -3367,6 +3385,7 @@ function openDrawer(kind, editIdx){
     const ec=(editIdx!=null)?components[editIdx]:null; const K=ec?ec.kind:'connector';
     let uploadedSpec=(ec&&ec.openapi)||null;   // a parsed OpenAPI spec (JSON) → renders on the detail page instead of the native contract
     let compArgDefs=(ec&&ec.args)?ec.args.map(a=>({...a})):[];   // configurable-arg schema (REAL-IMPL NOTE 10); edited copy
+    let connFieldDefs=(ec&&ec.subjectFields)?ec.subjectFields.map(f=>({...f})):[];   // connector's expected subject fields (name+type)
     title=ec?'Edit component':'Add component'; sub=ec?'update this container registration':'register a prebuilt container image';
     const compOpts=kd=>components.filter(c=>c.kind===kd && !c.disabled).map(c=>`<option value="${c.name}" ${ec&&(ec[kd+'s']||[]).includes(c.name)?'selected':''}>${c.name}</option>`).join('');
     body=`
@@ -3398,6 +3417,12 @@ function openDrawer(kind, editIdx){
         <div class="field"><label>Compatible scorers</label><select id="rc_scorers" multiple placeholder="scorers this runner can call…">${compOpts('scorer')}</select>
           <div class="hint">Declare which connectors, storages and scorers this runner can drive — in a run it can only be wired to these.</div></div>
       </div>
+      <div id="connFieldsField" style="display:none">
+        <div class="field"><label>Expected subject fields <span style="color:var(--fg-3);font-weight:400">· connector</span></label>
+          <div id="connFieldRows"></div>
+          <span class="add-prop" id="addConnField">+ add expected field</span>
+          <div class="hint">The fields this connector needs from a subject (<b>name + type</b>). A subject can be marked compatible with this connector only if it has <b>every</b> one of these fields in the matching type.</div></div>
+      </div>
       <div id="scoutHint" style="display:none">
         <div class="field"><label>How a scout works</label>
           <div class="hint" style="line-height:1.5">A <b style="color:var(--scout)">scout</b> is a <b>special</b> component — it is <b>not</b> placed in a pipeline graph. Given one <b>subject</b>, it collects live data <b>about that subject from the subject's own source</b> and returns it over the <b>fixed PBIntra scout API</b> (like an uploader, it takes <b>no custom OpenAPI</b>). When and how it runs is decided elsewhere — for now you just register it.</div></div>
@@ -3416,9 +3441,10 @@ function openDrawer(kind, editIdx){
       // custom OpenAPI. A runner also declares the components it can drive; a scout declares nothing (subject-scoped).
       const syncKind=()=>{
         const k=document.querySelector('input[name=ck]:checked').value;
-        const isRunner=k==='runner', isScout=k==='scout';
+        const isRunner=k==='runner', isScout=k==='scout', isConnector=k==='connector';
         $('#schemaField').style.display=(isRunner||isScout)?'none':'';
         $('#runnerCompatField').style.display=isRunner?'':'none';
+        const cf=$('#connFieldsField'); if(cf) cf.style.display=isConnector?'':'none';
         const sh=$('#scoutHint'); if(sh) sh.style.display=isScout?'':'none';
       };
       document.querySelectorAll('input[name=ck]').forEach(r=>r.onchange=syncKind); syncKind();
@@ -3443,6 +3469,10 @@ function openDrawer(kind, editIdx){
       const renderCompArgDefs=()=>{ const box=$('#compArgRows'); if(!box)return; box.innerHTML=''; compArgDefs.forEach((a,i)=>box.appendChild(compArgDefRow(a,i,renderCompArgDefs,compArgDefs))); };
       $('#addCompArg').onclick=()=>{ compArgDefs.push({name:'',type:'string',req:'required'}); renderCompArgDefs(); };
       renderCompArgDefs();
+      // connector: editor for the fields it expects from a subject (name + data type) — drives subject compatibility (NOTE 24)
+      const renderConnFieldDefs=()=>{ const box=$('#connFieldRows'); if(!box)return; box.innerHTML=''; connFieldDefs.forEach((f,i)=>box.appendChild(connFieldDefRow(f,i,renderConnFieldDefs,connFieldDefs))); };
+      const acf=$('#addConnField'); if(acf) acf.onclick=()=>{ connFieldDefs.push({name:'',type:'string'}); renderConnFieldDefs(); };
+      renderConnFieldDefs();
     };
     onsave=()=>{
       const name=$('#f_name').value.trim().replace(/[^A-Za-z0-9_-]/g,'')||'untitled-component';
@@ -3461,6 +3491,8 @@ function openDrawer(kind, editIdx){
         obj={kind:kind2,name,img};
         // scout speaks the fixed PBIntra scout API → never carries a custom OpenAPI (guards a connector→scout kind switch)
         if(uploadedSpec && kind2!=='scout') obj.openapi=uploadedSpec;   // optional parsed OpenAPI → detail page renders it with Scalar
+        // a connector declares the fields it expects from a subject (name + type) — drives subject compatibility (NOTE 24)
+        if(kind2==='connector'){ const fields=connFieldDefs.filter(f=>f.name&&f.name.trim()).map(f=>({name:f.name.trim(),type:f.type||'string'})); if(fields.length) obj.subjectFields=fields; }
       }
       // collect the declared configurable args (drop nameless rows); a default value only kept for optional-with-default
       const argsClean=compArgDefs.filter(a=>a.name&&a.name.trim()).map(a=>{
@@ -3656,13 +3688,17 @@ function openDrawer(kind, editIdx){
   setTimeout(()=>$('#f_name')?.focus(),200);
 }
 // one editable property row: key + (secret|value) + value-or-secret-picker + delete
-function propRowEl(key='',kind='value',value='',req=false){
+function propRowEl(key='',kind='value',value='',req=false,type='string'){
   const row=el('div','prop-row'+(req?' req-row':''));
+  // data TYPE (.ptype) is matched against a connector's expected field types for compatibility (REAL-IMPL NOTE 24);
+  // kind (.pkind) is the orthogonal binding: a literal value or a secret reference.
   row.innerHTML=`<input class="pk" placeholder="property" value="${key}" title="${req?'required by connector':''}">
     <select class="pkind"><option value="value">value</option><option value="secret">secret</option></select>
+    <select class="ptype" title="data type — matched to a connector's expected field type">${['string','number','boolean','json'].map(t=>`<option value="${t}">${t}</option>`).join('')}</select>
     <span class="pv-wrap"></span>
     <div class="prop-del" title="remove">✕</div>`;
   row.querySelector('.pkind').value=kind;
+  row.querySelector('.ptype').value=type;
   const wrap=row.querySelector('.pv-wrap');
   const ph=req?'required':'value';
   function renderVal(){
@@ -3707,6 +3743,19 @@ function compArgDefRow(a,idx,rerender,arr){
   row.querySelector('.cad-req').onchange=e=>{ a.req=e.target.value; defBox.style.display=a.req==='default'?'flex':'none'; if(a.req!=='default'){ delete a.default; delete a.secret; } };
   row.querySelector('.cad-defval').oninput=e=>a.default=e.target.value;
   row.querySelector('.cad-secchk').onchange=e=>a.secret=e.target.checked;
+  row.querySelector('.prop-del').onclick=()=>{ arr.splice(idx,1); rerender(); };
+  return row;
+}
+// one row of a connector's "expected subject fields" editor: just a field NAME + a data TYPE (REAL-IMPL NOTE 24)
+function connFieldDefRow(f,idx,rerender,arr){
+  const row=el('div','cargdef-row');
+  const typeOpts=['string','number','boolean','json'].map(t=>`<option ${t===f.type?'selected':''}>${t}</option>`).join('');
+  row.innerHTML=`<div class="cargdef-line" style="grid-template-columns:1fr 118px 30px">
+      <input class="cad-name" placeholder="field name" value="${escapeHtml(f.name||'')}">
+      <select class="cad-type">${typeOpts}</select>
+      <div class="prop-del" title="remove">✕</div></div>`;
+  row.querySelector('.cad-name').oninput=e=>{ e.target.value=e.target.value.replace(/[^A-Za-z0-9_-]/g,''); f.name=e.target.value; };
+  row.querySelector('.cad-type').onchange=e=>f.type=e.target.value;
   row.querySelector('.prop-del').onclick=()=>{ arr.splice(idx,1); rerender(); };
   return row;
 }
