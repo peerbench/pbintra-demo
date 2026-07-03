@@ -491,6 +491,18 @@ details.adv[open]>summary::before{content:"▾ "}
 .prop-row.req-row .pk{border-color:var(--signal-dim);box-shadow:inset 2px 0 0 var(--signal-dim)}
 .add-prop{font-family:var(--mono);font-size:11.5px;color:var(--signal-dim);cursor:pointer;border:1px dashed var(--line-2);border-radius:8px;padding:10px;text-align:center;display:block;margin-top:6px;transition:.15s}
 .add-prop:hover{color:var(--signal);border-color:var(--signal-dim)}
+/* subject drawer: connector eligibility list — a connector is only tickable once the subject has its required fields */
+.conn-list{display:flex;flex-direction:column;gap:6px}
+.conn-row{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:9px;padding:9px 11px;background:var(--ink-2)}
+.conn-row.disabled{opacity:.72;border-style:dashed}
+.conn-pick{display:flex;align-items:center;gap:8px;cursor:pointer;flex:none}
+.conn-row.disabled .conn-pick{cursor:not-allowed}
+.conn-pick input{margin:0}
+.conn-name{font-family:var(--mono);font-size:12.5px;color:var(--fg)}
+.conn-req{flex:1;min-width:0;font-size:11px;font-family:var(--mono);text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.conn-ok{color:var(--fg-3)}
+.conn-need{color:var(--amber)}
+.conn-add{flex:none;padding:5px 9px !important;font-size:10.5px !important}
 /* builder node config: one row per component-declared arg (name + type/req tags → value input) */
 .narg-row{margin-bottom:11px}
 .narg-row.req-row .narg-val{border-color:var(--signal-dim);box-shadow:inset 2px 0 0 var(--signal-dim)}
@@ -1172,13 +1184,18 @@ details.adv[open]>summary::before{content:"▾ "}
           forwards only to UPLOADERS; an uploader receives only from the hub, never the runner.
       Typed input ports have fixed sides on the runner (STORAGE top, CONNECTOR left, SCORER
       bottom; output right). Changing a node's component drops any edge that becomes invalid.
-   24. CONNECTORS DEFINE A SUBJECT'S REQUIRED CONFIG FIELDS. Each connector declares the config
-      fields a subject must supply to be reachable through it (e.g. openai-api → base_url[value,
-      required], api_key[secret,required], model[value,optional]). When a subject selects its
-      compatible connectors, the union of those fields loads as the subject's properties to fill
-      (each bound to a value or a secret). This is why identity = name + properties (NOTE 1): the
-      connector-required config IS the subject. PBIntra itself stays schemaless — it does not know
-      which property is a "url" or a "key"; the connector's field list is the only schema hint.
+   24. CONNECTORS DEFINE A SUBJECT'S REQUIRED FIELDS; COMPATIBILITY IS DERIVED FROM THEM. Each
+      connector declares the fields a subject must supply to be reachable through it (e.g. openai-api
+      → base_url[value,required], api_key[secret,required], model[value,optional]). A subject may
+      declare a connector as COMPATIBLE **only if it HAS all of that connector's REQUIRED fields**
+      (as properties with a value); otherwise that connector is NOT selectable for the subject. So
+      compatibility is not a free choice — it is gated by the subject's properties. The subject
+      editor reflects this: the connector list disables connectors whose required fields are missing
+      and shows which ones (`needs …`), with a "+ add its fields" action that appends those required
+      fields to the subject's properties (empty, to fill) — bridging the chicken-and-egg. Removing a
+      property that a compatible connector required auto-drops that connector's compatibility. This
+      is why identity = name + properties (NOTE 1): the connector-required config IS the subject.
+      PBIntra itself stays schemaless — the connector's field list is the only schema hint.
    25. SCHEMALESS RESULTS + SHAPES. A result is free-form JSON { testCase, response, score };
       PBIntra assumes NO field names. A SHAPE is a user-defined RENDERING RULE for one distinct
       structure — a structure's identity is the full RECURSIVE set of its keys+types (order-
@@ -1252,15 +1269,15 @@ let subjects = [
    properties:[{key:'base_url',kind:'value',value:'openrouter.ai/api/v1'},{key:'model',kind:'value',value:'anthropic/claude-sonnet-4.5'},{key:'api_key',kind:'secret',value:'OPENROUTER_API_KEY'},{key:'temperature',kind:'value',value:'0'}],
    meta:[{key:'owner',value:'benchmark-team'},{key:'notes',value:'flagship reference model'},{key:'tier',value:'frontier'}]},
   {id:'b',name:'gpt-4o-fnol-agent',score:87,trend:[80,81,79,82,83,84,83,85,86,85,86,88,87,87],
-   connectors:['stateful-chat','playwright-rpa','mastra-agent'],
-   properties:[{key:'endpoint',kind:'value',value:'api.alteos.com/agents/fnol'},{key:'agent_id',kind:'value',value:'fnol-de-v3'},{key:'auth_token',kind:'secret',value:'ALTEOS_AGENT_TOKEN'},{key:'locale',kind:'value',value:'de-DE'}],
+   connectors:['stateful-chat','mastra-agent'],
+   properties:[{key:'endpoint',kind:'value',value:'api.alteos.com/agents/fnol'},{key:'session_token',kind:'secret',value:'ALTEOS_AGENT_TOKEN'},{key:'base_url',kind:'value',value:'mastra.alteos.com'},{key:'agent_id',kind:'value',value:'fnol-de-v3'},{key:'locale',kind:'value',value:'de-DE'}],
    meta:[{key:'owner',value:'alteos'},{key:'region',value:'eu-central'}]},
   {id:'c',name:'gemini-2-0-flash',score:85,trend:[78,79,81,80,82,83,82,84,83,85,84,86,85,85],
    connectors:['openai-api','vertex-gemini'],
-   properties:[{key:'base_url',kind:'value',value:'generativelanguage.googleapis.com'},{key:'model',kind:'value',value:'gemini-2.0-flash'},{key:'api_key',kind:'secret',value:'GOOGLE_AI_KEY'}]},
+   properties:[{key:'base_url',kind:'value',value:'generativelanguage.googleapis.com'},{key:'model',kind:'value',value:'gemini-2.0-flash'},{key:'api_key',kind:'secret',value:'GOOGLE_AI_KEY'},{key:'project_id',kind:'value',value:'alteos-benchmarks'},{key:'location',kind:'value',value:'europe-west3'},{key:'service_account',kind:'secret',value:'GCP_SA_JSON'}]},
   {id:'d',name:'franzi-voice-bot',score:82,trend:[74,76,75,78,77,79,80,79,81,80,82,81,83,82],
    connectors:['stateful-chat','livekit-voice'],
-   properties:[{key:'endpoint',kind:'value',value:'livekit.alteos.com/voice/franzi'},{key:'voice_id',kind:'value',value:'franzi-de'},{key:'tts_key',kind:'secret',value:'ELEVENLABS_KEY'},{key:'auth_token',kind:'secret',value:'ALTEOS_AGENT_TOKEN'}]},
+   properties:[{key:'endpoint',kind:'value',value:'livekit.alteos.com/voice/franzi'},{key:'session_token',kind:'secret',value:'ALTEOS_AGENT_TOKEN'},{key:'livekit_url',kind:'value',value:'wss://livekit.alteos.com'},{key:'api_key',kind:'secret',value:'LIVEKIT_API_KEY'},{key:'api_secret',kind:'secret',value:'LIVEKIT_API_SECRET'},{key:'voice_id',kind:'value',value:'franzi-de'}]},
   {id:'e',name:'llama-3-3-70b',score:78,trend:[70,71,73,72,74,73,75,76,75,77,76,78,77,78],
    connectors:['openai-api'],
    properties:[{key:'base_url',kind:'value',value:'openrouter.ai/api/v1'},{key:'model',kind:'value',value:'meta-llama/llama-3.3-70b'},{key:'api_key',kind:'secret',value:'OPENROUTER_API_KEY'}]},
@@ -1268,7 +1285,7 @@ let subjects = [
    connectors:['openai-api'],
    properties:[{key:'base_url',kind:'value',value:'openrouter.ai/api/v1'},{key:'model',kind:'value',value:'qwen/qwen-2.5-72b'},{key:'api_key',kind:'secret',value:'OPENROUTER_API_KEY'}]},
   {id:'g',name:'klara-claims-mastra-agent',score:80,trend:[72,73,74,73,75,76,75,77,78,77,79,78,80,80],
-   connectors:['mastra-agent','stateful-chat'],
+   connectors:['mastra-agent'],
    properties:[{key:'base_url',kind:'value',value:'mastra.alteos.com'},{key:'agent_id',kind:'value',value:'claims-triage'},{key:'api_key',kind:'secret',value:'MASTRA_API_KEY'},{key:'locale',kind:'value',value:'de-DE'}],
    meta:[{key:'owner',value:'alteos'},{key:'framework',value:'mastra'}]},
 ];
@@ -2374,7 +2391,7 @@ function roNodeHtml(n){
   } else if(n.type==='pbintra'){
     inner=`<div class="nbody"><div class="cn">PBIntra</div><div class="ci" style="color:var(--fg-3)">results are reported to PBIntra</div></div>`;
   } else { const comp=components.find(x=>x.name===n.comp); const img=(n.compSnap&&n.compSnap.img)||(comp?comp.img:'');
-    inner=`<div class="nbody"><div class="cn">${n.comp||n.type}</div>${img?`<div class="ci">${img}</div>`:''}<div class="args"><span>${nodeArgSummary(n)}</span><span>on ${platformLabel(n.platform||defaultPlatform)}</span>${n.keepSync?'<span title="always uses the source definition">⟳ sync</span>':''}</div></div>`;
+    inner=`<div class="nbody"><div class="cn">${n.comp||n.type}${n.compVer?` <span style="color:var(--pbintra);font-size:10px">v${n.compVer}</span>`:''}</div>${img?`<div class="ci">${img}</div>`:''}<div class="args"><span>${nodeArgSummary(n)}</span><span>on ${platformLabel(n.platform||defaultPlatform)}</span></div></div>`;
   }
   return `<div class="node ro-node t-${n.type}${n.type==='subject'?' subject':''}" style="left:${n.x}px;top:${n.y}px" data-id="${n.id}">
     <div class="nhead"><span class="ntype" style="color:${col}"><i data-lucide="${lucideName[n.type]}"></i></span><span class="lbl">${n.type}</span></div>${inner}
@@ -3038,8 +3055,8 @@ function renderDocs(){
       <div class="doc-sub">Add a subject</div>
       ${steps([
         `Open <b>Subjects</b> in the sidebar, click ${btn('+ Add subject')}.`,
-        `Name it, then choose its <b>compatible connectors</b> — the config fields those connectors require load automatically.`,
-        `Fill each property as a <b>value</b> or a <b>secret</b> reference, add any <b>metadata</b>, then ${btn('Save')}.`,
+        `Add its <b>properties</b> (each a <b>value</b> or a <b>secret</b> reference). A connector becomes <b>selectable</b> only once the subject has all the fields that connector requires — use ${btn('+ add its fields','ghost')} on a connector to add its required fields, then fill them.`,
+        `Tick the <b>compatible connectors</b> (only the eligible ones), add any <b>metadata</b>, then ${btn('Save')}.`,
       ])}
     </div>
 
@@ -3218,7 +3235,7 @@ function confirmDialog(opts){
 }
 const HELP={
   dashboard:{t:'Dashboard',b:`<p><b>What.</b> The at-a-glance health view of your backtesting workspace.</p><p><b>How.</b> It aggregates every result across runs — average quality, per-subject leaderboard, a quality-over-time chart, and recent runs — all computed from the same in-memory data the other pages write to.</p><p><b>Why.</b> Backtesting is about tracking quality <i>day by day</i>; this is where regressions and improvements surface first.</p>`},
-  subjects:{t:'Subjects',b:`<p><b>What.</b> The things under test — any model or agent at a remote endpoint. There is <b>no LLM/agent type</b>: a subject is just a <b>name + properties</b>.</p><p><b>How.</b> Properties (base_url, model, api_key, …) are each bound to a stored <b>secret</b> or a literal value. A subject also declares which <b>connector</b> containers it is compatible with — it can wire to any of them.</p><p><b>Versioned.</b> Like components &amp; pipelines, a subject is <b>versioned</b>: changing its properties or compatible connectors makes a new version; a name/display-name/metadata edit does not. A pipeline pins a specific subject version.</p><p><b>Why.</b> Subjects are what you score. Free-form property bags (not fixed fields, no type) let any model or agent be tested the same way. Identity = name + properties (metadata excluded).</p>`},
+  subjects:{t:'Subjects',b:`<p><b>What.</b> The things under test — any model or agent at a remote endpoint. There is <b>no LLM/agent type</b>: a subject is just a <b>name + properties</b>.</p><p><b>How.</b> Properties (base_url, model, api_key, …) are each bound to a stored <b>secret</b> or a literal value. Each <b>connector</b> declares the fields it needs; a subject can be marked compatible with a connector <b>only once it has all that connector's required fields</b> — otherwise the connector isn't selectable.</p><p><b>Versioned.</b> Like components &amp; pipelines, a subject is <b>versioned</b>: changing its properties or compatible connectors makes a new version; a name/display-name/metadata edit does not. A pipeline pins a specific subject version.</p><p><b>Why.</b> Subjects are what you score. Free-form property bags (not fixed fields, no type) let any model or agent be tested the same way. Identity = name + properties (metadata excluded).</p>`},
   components:{t:'Components',b:`<p><b>What.</b> The container images PBIntra orchestrates. Six kinds: <b>connector</b>, <b>storage</b>, <b>runner</b>, <b>scorer</b>, <b>uploader</b> — plus a special <b>scout</b> (not wired into a pipeline).</p><p><b>How.</b> A component is just a prebuilt image URL plus a name (its DB id). It may declare <b>configurable arguments</b> (each required, optional, or optional-with-default — and a default may be a secret); the user fills these in when placing the component in a pipeline. An <b>API schema is optional</b> — upload an OpenAPI spec to document the component (rendered on its detail page); leave it out and nothing is shown. There is no default schema.</p><p><b>Versioned.</b> Like pipelines, a component is <b>versioned</b>: every behavioural edit (image/args/source/compatibility) makes a new version; a name/description edit does not. Its detail page lists all versions, and a pipeline pins a specific one.</p><p><b>Why.</b> Everything is a container so anyone can extend the platform — publish an image that speaks the contract and it plugs in, no core changes.</p>`},
   connector:{t:'Connector',b:`<p><b>What.</b> The container that lets PBIntra <b>talk to a subject</b> — the adapter at the end of the wire.</p><p><b>How.</b> It exposes an OpenAI-compatible API (<code>/v1/chat/completions</code>). The runner sends a test case to the connector, which calls the actual subject and returns the response.</p><p><b>Why.</b> Subjects speak many protocols; the connector normalizes them behind one schema so the runner never needs subject-specific code. Only compatible connectors can wire to a subject.</p>`},
   storage:{t:'Storage',b:`<p><b>What.</b> The container that <b>finds and serves test cases</b> to the runner.</p><p><b>How.</b> It exposes <code>/api/testcases</code> (all), <code>/api/testcases/next</code> (cursor/foreach) and <code>/api/testcases/count</code>. Source can be a HuggingFace dataset, S3, Postgres, anything.</p><p><b>Why.</b> Decoupling the data source from the run means the same pipeline can be pointed at any dataset by swapping one container.</p>`},
@@ -3252,13 +3269,13 @@ function openDrawer(kind, editIdx){
           <input id="f_display" placeholder="pretty label shown in the UI" value="${es&&es.displayName?escapeHtml(es.displayName):''}">
           <div class="hint">Cosmetic label shown instead of the id. Not part of identity.</div></div>
       </details>
-      <div class="field"><label>Compatible connectors</label>
-        <select id="compatSelect" multiple placeholder="Select connector containers…">${components.filter(c=>c.kind==='connector').map(c=>`<option value="${c.name}" ${es&&(es.connectors||[]).includes(c.name)?'selected':''}>${c.name}</option>`).join('')}</select>
-        <div class="hint">Select the connector containers (registered in <b>Components</b>) this subject can be tested through — it can only be wired to these in a run.</div></div>
       <div class="field"><label>Properties</label>
         <div id="propRows"></div>
         <span class="add-prop" id="addProp">+ add property</span>
-        <div class="hint">Fields <b>required by the selected connector(s)</b> load above — fill their values. Each is bound to a <b>secret</b> or a direct <b>value</b>. Add extra properties if needed.</div></div>
+        <div class="hint">The subject's fields — each bound to a <b>secret</b> or a literal <b>value</b>. A connector below only becomes <b>selectable</b> once the subject has all the fields that connector requires.</div></div>
+      <div class="field"><label>Compatible connectors</label>
+        <div id="connList" class="conn-list"></div>
+        <div class="hint">Each connector declares the fields it needs from a subject. Tick the connectors this subject can be tested through — <b>only those whose required fields the subject already has</b> are selectable. Use <b>+ add its fields</b> to add a connector's required fields to Properties above, then fill them.</div></div>
       <div class="field"><label>Metadata <span style="text-transform:none;letter-spacing:0;color:var(--fg-3)">· optional</span></label>
         <div id="metaRows"></div>
         <span class="add-prop" id="addMeta">+ add metadata</span>
@@ -3266,38 +3283,63 @@ function openDrawer(kind, editIdx){
     after=()=>{
       // subject name is the DB id → allow only [A-Za-z0-9_-], strip anything else live (same rule as components)
       $('#f_name').addEventListener('input',e=>{ e.target.value=e.target.value.replace(/[^A-Za-z0-9_-]/g,''); });
-      // remember entered/known values by key so toggling connectors never wipes them (esp. edit mode)
-      const valueMap={};
-      (es?.properties||[]).forEach(p=>{ valueMap[p.key]={kind:p.kind,value:p.value}; });
-      const captureDom=()=>{ $$('#propRows .prop-row').forEach(r=>{ const k=r.querySelector('.pk')?.value.trim(); if(!k)return; valueMap[k]={kind:r.querySelector('.pkind').value, value:r.querySelector('.pv')?.value||''}; }); };
-      const rebuild=()=>{
-        const sel=[...$('#compatSelect').selectedOptions].map(o=>o.value);
-        const req=new Set(), fields=[];
-        sel.forEach(cn=>(connectorFields[cn]||[]).forEach(f=>{ if(!req.has(f.key)){req.add(f.key); fields.push(f);} }));
-        const pr=$('#propRows'); pr.innerHTML='';
-        // connector-required fields first (prefilled from known values), then any extra properties the subject already had
-        fields.forEach(f=>{ const v=valueMap[f.key]; pr.appendChild(propRowEl(f.key, v?v.kind:f.kind, v?v.value:'', f.required)); });
-        Object.keys(valueMap).forEach(k=>{ if(!req.has(k)){ const v=valueMap[k]; pr.appendChild(propRowEl(k,v.kind,v.value,false)); } });
-        if(!pr.children.length) pr.innerHTML='<div class="empty" style="padding:14px;font-size:12px">pick a connector above to load the fields it requires</div>';
+      // Compatibility is DERIVED from properties (REAL-IMPL NOTE 24): a connector is only selectable once the subject
+      // HAS all the fields that connector requires. `chosen` holds the ticked connectors; a connector that loses its
+      // required fields is auto-unticked. Properties are user-driven now (no more auto-load on connector select).
+      const chosen=new Set((es&&es.connectors)||[]);
+      const pr=$('#propRows'); (es?.properties||[]).forEach(p=>pr.appendChild(propRowEl(p.key,p.kind,p.value,false)));
+      // current property keys that have a non-empty value → what the subject "has"
+      const haveKeys=()=>{ const have={}; $$('#propRows .prop-row').forEach(r=>{ const k=r.querySelector('.pk')?.value.trim(); const ve=r.querySelector('.pv'); const v=ve?ve.value.trim():''; if(k) have[k]=have[k]||(v!==''); }); return have; };
+      const renderConnList=()=>{
+        const have=haveKeys(); const box=$('#connList'); if(!box) return; box.innerHTML='';
+        const conns=components.filter(c=>c.kind==='connector');
+        if(!conns.length){ box.innerHTML='<div class="empty" style="padding:12px;font-size:12px">no connector components registered</div>'; return; }
+        conns.forEach(c=>{
+          const reqs=(connectorFields[c.name]||[]).filter(f=>f.required);
+          const missing=reqs.filter(f=>!have[f.key]).map(f=>f.key);
+          const ok=missing.length===0;
+          if(!ok && chosen.has(c.name)) chosen.delete(c.name);   // property removed/emptied → drop compatibility
+          const row=el('div','conn-row'+(ok?'':' disabled'));
+          const needTxt = ok
+            ? `<span class="conn-ok">✓ ${reqs.length?'requires '+reqs.map(f=>escapeHtml(f.key)).join(', '):'no required fields'}</span>`
+            : `<span class="conn-need">needs ${missing.map(escapeHtml).join(', ')}</span>`;
+          row.innerHTML=`<label class="conn-pick"><input type="checkbox" ${chosen.has(c.name)?'checked':''} ${ok?'':'disabled'}><span class="conn-name comp-link connector" style="cursor:default;border:none">${escapeHtml(c.name)}</span></label>
+            <span class="conn-req">${needTxt}</span>
+            ${ok?'':`<button type="button" class="btn ghost sm conn-add">+ add its fields</button>`}`;
+          const cb=row.querySelector('input'); cb.onchange=()=>{ if(cb.checked) chosen.add(c.name); else chosen.delete(c.name); };
+          const add=row.querySelector('.conn-add'); if(add) add.onclick=()=>addConnFields(c.name);
+          box.appendChild(row);
+        });
       };
-      if(window.TomSelect && $('#compatSelect')){
-        const ts=new TomSelect('#compatSelect',{plugins:['remove_button'],persist:false,create:false,hideSelected:true,maxOptions:null});
-        ts.on('change',()=>{ captureDom(); rebuild(); });
-      } else { $('#compatSelect').onchange=()=>{ captureDom(); rebuild(); }; }
-      rebuild();
-      $('#addProp').onclick=()=>{ const e=$('#propRows .empty'); if(e) e.remove(); $('#propRows').appendChild(propRowEl()); };
+      // add a connector's required fields (that aren't already present) to Properties, then re-check eligibility
+      const addConnFields=name=>{
+        const existing=new Set([...$$('#propRows .prop-row')].map(r=>r.querySelector('.pk')?.value.trim()).filter(Boolean));
+        (connectorFields[name]||[]).forEach(f=>{ if(!existing.has(f.key)) $('#propRows').appendChild(propRowEl(f.key,f.kind,'',f.required)); });
+        renderConnList();
+      };
+      // any property edit (type/value/key) or row removal re-computes which connectors are eligible, live
+      pr.addEventListener('input', renderConnList);
+      pr.addEventListener('change', renderConnList);
+      pr.addEventListener('click', e=>{ if(e.target.classList.contains('prop-del')) setTimeout(renderConnList,0); });
+      $('#addProp').onclick=()=>{ $('#propRows').appendChild(propRowEl()); renderConnList(); };
+      renderConnList();
       const mr=$('#metaRows'); (es?.meta||[]).forEach(m=>mr.appendChild(metaRowEl(m.key,m.value)));
       $('#addMeta').onclick=()=>$('#metaRows').appendChild(metaRowEl());
     };
     onsave=()=>{
       const name=($('#f_name').value.trim().replace(/[^A-Za-z0-9_-]/g,''))||'untitled-subject';
       const displayName=$('#f_display').value.trim();
-      const connectors=[...$('#compatSelect').selectedOptions].map(o=>o.value);
       const properties=[...$('#propRows').children].filter(r=>r.querySelector('.pk')).map(r=>({
         key:(r.querySelector('.pk').value.trim()||'prop'),
         kind:r.querySelector('.pkind').value,
         value:r.querySelector('.pv').value.trim(),
       })).filter(p=>p.value);
+      // a connector is only compatible if the subject HAS all its required fields (REAL-IMPL NOTE 24): keep the ticked
+      // rows, but drop any whose requirements the final properties don't satisfy (belt-and-braces on top of the live UI).
+      const have={}; properties.forEach(p=>{ have[p.key]=true; });
+      const connectors=[...$$('#connList .conn-row')].filter(r=>{ const cb=r.querySelector('input'); return cb&&cb.checked; })
+        .map(r=>r.querySelector('.conn-name').textContent)
+        .filter(cn=>(connectorFields[cn]||[]).filter(f=>f.required).every(f=>have[f.key]));
       const meta=[...$('#metaRows').children].map(r=>({key:r.querySelector('.mk').value.trim(), value:r.querySelector('.mv').value.trim()})).filter(m=>m.key);
       if(es){
         // BEHAVIOURAL edit (connectors/properties changed) → new version; name/display/metadata edits stay in place.
@@ -3768,7 +3810,7 @@ function renderNodes(){
     } else {
       const comp=components.find(x=>x.name===n.comp);
       inner=`<div class="nbody">${n.comp?`<div class="cn">${n.comp}</div><div class="ci">${comp?comp.img:'image:tag'}</div>
-        <div class="args"><span>${nodeArgSummary(n)}</span><span>on ${platformLabel(n.platform||defaultPlatform)}</span>${n.keepSync?'<span title="always uses the source definition">⟳ sync</span>':''}</div>`:`<div class="empty">click to pick a ${n.type} container</div>`}</div>`;
+        <div class="args"><span>${nodeArgSummary(n)}</span><span>on ${platformLabel(n.platform||defaultPlatform)}</span>${n.compVer?`<span title="pinned component version">v${n.compVer}</span>`:''}</div>`:`<div class="empty">click to pick a ${n.type} container</div>`}</div>`;
     }
     // PBIntra is the platform itself → always present, cannot be deleted (no ✕)
     d.innerHTML=`<div class="nhead"><span class="ntype" style="color:${col}"><i data-lucide="${lucideName[n.type]}"></i></span><span class="lbl">${n.type}</span><span class="gp">⠿</span><span class="help-q nq" onclick="event.stopPropagation();help('${n.type==='subject'?'subject_node':n.type}')" title="What is this?">?</span>${n.type==='pbintra'?'':'<span class="del" title="remove node">✕</span>'}</div>
