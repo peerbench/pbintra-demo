@@ -1252,6 +1252,24 @@ details.adv[open]>summary::before{content:"▾ "}
           (NOTE 20) and/or on-demand per subject. For now it is only REGISTERED and LISTED as a
           component; it appears under Components (its own "Scouts" kind filter + sub-menu) and never
           in the pipeline builder palette.
+   32. DEFAULT ENVIRONMENT VARIABLES (per component). Besides configurable ARGS (NOTE 10, filled per
+      node in the builder), a component may declare DEFAULT ENV VARS in its own config — env vars
+      PBIntra sets on the container at launch. Each entry is {name, src, value}; src is one of:
+        • value  — a literal string baked into the launch config.
+        • secret — a secret NAME; PBIntra RESOLVES it and injects the value at container start (NOT
+                   baked into the image — consistent with NOTE 2's "never bake secrets"; the image
+                   stays clean, PBIntra provides the value at launch).
+        • pbintra — a RUNTIME value PBIntra computes for THIS run/node and assigns to the env name.
+                    The catalog (PBINTRA_ENV_VARS): run_id, run_token, pbintra_endpoint, started_at;
+                    pipeline_id/name/version; component_name/version, node_id, platform (the execution
+                    platform the container runs on); subject_count, subjects_json, connector_count,
+                    connector_endpoints, storage_count, storage_endpoints, scorer_count,
+                    scorer_endpoints, uploader_count. This generalises the always-injected wiring vars
+                    (NOTES 17-19) so an author can surface any of them under their own env name (e.g.
+                    a runner that reads SCORER_COUNT to size a worker pool, or RUN_PLATFORM to branch).
+      Env vars are part of the component's BEHAVIOURAL def → versioned (NOTE 16); shown on the detail
+      page per selected version. PBIntra still ALWAYS injects the standard wiring env (NOTES 17-19)
+      regardless — these declared ones are additive, author-chosen, on top.
    ───────────────────────────────────────────────────────────────────────────── */
 
 const SCORE_DAYS = 14;
@@ -1327,7 +1345,9 @@ let components = [
   {kind:'runner',name:'lm-eval-blackbox',img:'ghcr.io/peerbench/runner-lm-eval:0.7.0',connectors:['openai-api','anthropic','vertex-gemini'],storages:[],scorers:[],
     args:[{name:'tasks',type:'string',req:'required'},{name:'num_fewshot',type:'number',req:'default',default:'0'},{name:'limit',type:'number',req:'optional'}],
     desc:'Wraps the real lm-evaluation-harness as a black box — for standard academic benchmarks (MMLU, include_de…). Loads its own datasets and scores internally (via args), so it needs no storage or scorer.'},
-  {kind:'runner',name:'single-turn',img:'ghcr.io/peerbench/runner-single:1.3.0',connectors:['openai-api','stateful-chat','anthropic','vertex-gemini','mastra'],storages:['postgres-testcases','huggingface-dataset','s3-jsonl','pbfed-testcases'],scorers:['exact-match','llm-judge','regex-match','semantic-similarity','cost-latency','rubric'],desc:'One prompt → one response → score. The default runner for most single-shot benchmarks.'},
+  {kind:'runner',name:'single-turn',img:'ghcr.io/peerbench/runner-single:1.3.0',connectors:['openai-api','stateful-chat','anthropic','vertex-gemini','mastra'],storages:['postgres-testcases','huggingface-dataset','s3-jsonl','pbfed-testcases'],scorers:['exact-match','llm-judge','regex-match','semantic-similarity','cost-latency','rubric'],
+    env:[{name:'PBINTRA_ENDPOINT',src:'pbintra',value:'pbintra_endpoint'},{name:'SCORER_COUNT',src:'pbintra',value:'scorer_count'},{name:'RUN_PLATFORM',src:'pbintra',value:'platform'},{name:'LOG_LEVEL',src:'value',value:'info'}],
+    desc:'One prompt → one response → score. The default runner for most single-shot benchmarks.'},
   {kind:'runner',name:'multi-turn-conversation',img:'ghcr.io/peerbench/runner-multi:1.1.2',connectors:['stateful-chat','mastra-agent','livekit-voice'],storages:['postgres-testcases'],scorers:['llm-judge','rubric','cost-latency'],desc:'Runs a multi-turn dialogue against the subject — for agents / conversations, not single prompts.'},
   {kind:'scorer',name:'llm-judge',img:'ghcr.io/peerbench/scorer-llm-judge:1.1.0',desc:'LLM-as-judge — an LLM grades each response (with a rubric) and returns a score. The popular default.',
     args:[{name:'judge_model',type:'string',req:'required'},{name:'rubric',type:'string',req:'optional'},{name:'pass_threshold',type:'number',req:'default',default:'0.5'},{name:'judge_api_key',type:'string',req:'default',default:'OPENROUTER_API_KEY',secret:true}],
@@ -1344,6 +1364,7 @@ let components = [
   // An uploader must implement the FIXED PBIntra result-ingest API (not yet finalised) — it does NOT take a custom OpenAPI.
   {kind:'uploader',name:'s3-results-exporter',img:'ghcr.io/peerbench/uploader-s3:1.0.0',
     args:[{name:'bucket',type:'string',req:'required'},{name:'prefix',type:'string',req:'default',default:'runs/'}],
+    env:[{name:'AWS_REGION',src:'value',value:'eu-central-1'},{name:'AWS_ACCESS_KEY_ID',src:'secret',value:'AWS_S3_KEY'},{name:'PBINTRA_RUN_ID',src:'pbintra',value:'run_id'}],
     desc:'Writes each result as one JSONL line to an S3 bucket — for data-lake / archival export.'},
   {kind:'uploader',name:'webhook-exporter',img:'ghcr.io/peerbench/uploader-webhook:0.9.0',desc:'POSTs each result to an HTTP webhook — wire runs into Slack, alerting, or your own service.'},
   {kind:'uploader',name:'bigquery-sink',img:'ghcr.io/peerbench/uploader-bq:1.2.0',desc:'Streams each result into a BigQuery table for SQL analytics and dashboards.'},
@@ -1370,7 +1391,8 @@ let components = [
 // The entity's FLAT fields (c.img/c.args/…, s.connectors/s.properties) always mirror its LATEST version's def.
 function compDef(c){ return {img:c.img, source:c.source, args:JSON.parse(JSON.stringify(c.args||[])),
   connectors:c.connectors?[...c.connectors]:undefined, storages:c.storages?[...c.storages]:undefined, scorers:c.scorers?[...c.scorers]:undefined,
-  subjectFields:c.subjectFields?JSON.parse(JSON.stringify(c.subjectFields)):undefined}; }
+  subjectFields:c.subjectFields?JSON.parse(JSON.stringify(c.subjectFields)):undefined,
+  env:c.env?JSON.parse(JSON.stringify(c.env)):undefined}; }
 function subjDef(s){ return {connectors:[...(s.connectors||[])], properties:JSON.parse(JSON.stringify(s.properties||[]))}; }
 // stable behavioural signature → equal sig means an edit is name/desc-only, so it does NOT bump the version
 function subjExecSig(s){ const d=subjDef(s); return JSON.stringify({c:[...d.connectors].sort(), p:d.properties}); }
@@ -1393,6 +1415,32 @@ const CONNECTOR_SUBJECT_FIELDS={
 components.filter(c=>c.kind==='connector').forEach(c=>{ if(!c.subjectFields) c.subjectFields=(CONNECTOR_SUBJECT_FIELDS[c.name]||[]).map(f=>({...f})); });
 // the expected fields of a connector by name (its component's subjectFields; [] for a connector that declares none)
 function connFields(name){ return ((components.find(c=>c.name===name)||{}).subjectFields)||[]; }
+// Runtime variables PBIntra can inject into a container's env (chosen by the component author per env var). PBIntra
+// resolves each at launch and sets the declared env name to it. Generalises the always-injected NOTES 17-19 wiring so
+// authors can also expose run/pipeline/topology context under their own env names. (REAL-IMPL NOTE 32.)
+const PBINTRA_ENV_VARS=[
+  {id:'run_id',        group:'Run',            label:'Run ID'},
+  {id:'run_token',     group:'Run',            label:'Run token — call back to PBIntra'},
+  {id:'pbintra_endpoint',group:'Run',          label:'PBIntra endpoint — result hub URL'},
+  {id:'started_at',    group:'Run',            label:'Run started at (ISO)'},
+  {id:'pipeline_id',   group:'Pipeline',       label:'Pipeline ID'},
+  {id:'pipeline_name', group:'Pipeline',       label:'Pipeline name'},
+  {id:'pipeline_version',group:'Pipeline',     label:'Pipeline version'},
+  {id:'component_name',group:'This container', label:'Component name'},
+  {id:'component_version',group:'This container',label:'Component version (pinned)'},
+  {id:'node_id',       group:'This container', label:'Node ID — in the pipeline graph'},
+  {id:'platform',      group:'This container', label:'Execution platform (docker / cloud-run / …)'},
+  {id:'subject_count', group:'Topology',       label:'Subject count'},
+  {id:'subjects_json', group:'Topology',       label:'Subjects JSON — secrets blanked+marked'},
+  {id:'connector_count',group:'Topology',      label:'Connector count'},
+  {id:'connector_endpoints',group:'Topology',  label:'Connector endpoints (CSV)'},
+  {id:'storage_count', group:'Topology',       label:'Storage count'},
+  {id:'storage_endpoints',group:'Topology',    label:'Storage endpoints (CSV)'},
+  {id:'scorer_count',  group:'Topology',       label:'Scorer count'},
+  {id:'scorer_endpoints',group:'Topology',     label:'Scorer endpoints (CSV)'},
+  {id:'uploader_count',group:'Topology',       label:'Uploader count'},
+];
+function pbEnvLabel(id){ const v=PBINTRA_ENV_VARS.find(x=>x.id===id); return v?v.label:id; }
 // every subject property carries a data TYPE (string/number/boolean/json) — the connector-compat check matches name+type.
 // default legacy/seed props (that don't set one) to 'string'. Runs BEFORE version init so subjDef captures the type.
 subjects.forEach(s=>(s.properties||[]).forEach(p=>{ if(!p.type) p.type='string'; }));
@@ -1720,6 +1768,7 @@ function componentExecSig(c){
     args:(c.args||[]).map(a=>({name:a.name,type:a.type,req:a.req,default:a.default,secret:!!a.secret})),
     connectors:c.connectors||null, storages:c.storages||null, scorers:c.scorers||null,
     subjectFields:(c.subjectFields||[]).map(f=>({name:f.name,type:f.type})),
+    env:(c.env||[]).map(e=>({name:e.name,src:e.src,value:e.value})),
   });
 }
 // does a subject (its properties) satisfy connector `cn`'s expected fields? Returns {ok, missing:[{name,type}],
@@ -2760,6 +2809,17 @@ function openComponent(idx){
     <div class="panel reveal" style="padding:6px 6px 2px"><table class="tbl">
       <thead><tr><th>Name</th><th>Type</th><th>Requirement</th><th>Default</th></tr></thead>
       <tbody>${vdef.args.map(argRow).join('')}</tbody></table></div>` : '';
+  // default env vars this component sets on its container at launch (REAL-IMPL NOTE 32) — value / secret / PBIntra runtime value
+  const envValCell=e=> e.src==='pbintra'
+      ? `<span class="atag" style="color:var(--pbintra);border-color:rgba(62,207,142,.4);text-transform:none">⟨PBIntra⟩ ${escapeHtml(pbEnvLabel(e.value))}</span>`
+      : e.src==='secret'
+      ? `<span class="atag sec">🔒 secret</span> <span class="mono" style="color:var(--fg-2)">${escapeHtml(e.value||'—')}</span>`
+      : `<span class="mono" style="color:var(--fg-2)">${escapeHtml(e.value||'—')}</span>`;
+  const envSection = (vdef.env&&vdef.env.length) ? `
+    <div class="section-h"><h2>Environment variables</h2><div class="ln"></div><span style="font-family:var(--mono);font-size:11px;color:var(--fg-3)">v${selVer} · set on the container at launch</span></div>
+    <div class="panel reveal" style="padding:6px 6px 2px"><table class="tbl">
+      <thead><tr><th>Name</th><th>Source</th><th>Value</th></tr></thead>
+      <tbody>${vdef.env.map(e=>`<tr><td><span class="mono" style="color:var(--fg)">${escapeHtml(e.name)}</span></td><td>${e.src==='pbintra'?'PBIntra':(e.src==='secret'?'secret':'literal')}</td><td>${envValCell(e)}</td></tr>`).join('')}</tbody></table></div>` : '';
   // built-in components (pbintra storage) are locked: no Edit
   const rightSide = c.disabled
     ? `<span class="pill" style="color:var(--fg-3);border-color:var(--line-2)"><span class="ld"></span>disabled · soon</span>`
@@ -2785,6 +2845,7 @@ function openComponent(idx){
     ${versionsSection}
     ${detailsSection}
     ${argsSection}
+    ${envSection}
     ${apiSection}`;
   drawIcons();
   // mount Scalar into the iframe AFTER the node exists, via a Blob URL (reliable on file://; see scalarFrameHtml)
@@ -3116,6 +3177,16 @@ function renderDocs(){
           <tr><td class="mono" style="color:var(--fg)">judge_api_key</td><td><span class="atag ty">string</span></td><td>optional + default</td><td><span class="atag sec">🔒 secret</span> <span class="mono" style="color:var(--fg-2)">OPENROUTER_API_KEY</span></td></tr>
         </tbody></table>
       </div>
+      <p class="subtitle">Separately, a component can declare <b>default environment variables</b> PBIntra sets on the container at launch. Each value is a <b>literal</b>, a <b>secret</b> (resolved &amp; injected at start — never baked into the image), or a <b>PBIntra runtime value</b>: run id / run token / endpoint / <b>platform</b> it runs on, pipeline id·name·version, or topology like the <b>scorer count</b> / storage &amp; connector endpoints. This surfaces the always-injected wiring (endpoints, subjects) under your own env names, plus run context.</p>
+      <div class="doc-eg"><span class="eg-lbl">the single-turn runner's default env</span>
+        <table class="tbl"><thead><tr><th>Name</th><th>Source</th><th>Value</th></tr></thead>
+        <tbody>
+          <tr><td class="mono" style="color:var(--fg)">PBINTRA_ENDPOINT</td><td>PBIntra</td><td><span class="atag" style="color:var(--pbintra);border-color:rgba(62,207,142,.4);text-transform:none">⟨PBIntra⟩ result hub URL</span></td></tr>
+          <tr><td class="mono" style="color:var(--fg)">SCORER_COUNT</td><td>PBIntra</td><td><span class="atag" style="color:var(--pbintra);border-color:rgba(62,207,142,.4);text-transform:none">⟨PBIntra⟩ scorer count</span></td></tr>
+          <tr><td class="mono" style="color:var(--fg)">RUN_PLATFORM</td><td>PBIntra</td><td><span class="atag" style="color:var(--pbintra);border-color:rgba(62,207,142,.4);text-transform:none">⟨PBIntra⟩ execution platform</span></td></tr>
+          <tr><td class="mono" style="color:var(--fg)">LOG_LEVEL</td><td>literal</td><td class="mono" style="color:var(--fg-2)">info</td></tr>
+        </tbody></table>
+      </div>
     </div>
 
     ${H('Execution platforms','where each container runs')}
@@ -3219,6 +3290,7 @@ function renderDocs(){
         `<b>Subjects to the runner (env).</b> All pipeline subjects arrive via <span class="mono">SUBJECTS_JSON</span> — a JSON object keyed by subject slug, each value the subject's full info. Secret fields are empty and their key is marked <span class="mono">:SECRET</span> (e.g. <span class="mono">"api_key:SECRET":""</span>) so the runner resolves them through the PBIntra API before use.`,
         `<b>Subject metadata → runner.</b> A subject's metadata is not part of its identity, but it IS handed to the runner at run time so the runner can use it if it needs to.`,
         `<b>Configurable args.</b> Each component declares its own args (required / optional / optional-with-default; a default may be a secret); the user fills them per node when building a pipeline.`,
+        `<b>Default env vars.</b> A component may also declare default <b>environment variables</b> PBIntra sets on the container at launch — each a literal, a secret (resolved &amp; injected at start, never baked in), or a <b>PBIntra runtime value</b> (run id/token, endpoint, platform, subject/scorer counts, endpoints…). This generalises the always-injected wiring (NOTES on endpoints/subjects) under author-chosen names.`,
         `<b>Multi-platform execution.</b> A container can run on Docker, Cloud Run, Lambda, Cloudflare Workers or Supabase Functions — chosen per container. Platform credentials live in Settings and are NOT secrets.`,
         `<b>Container sources.</b> Private images are pulled via a connected registry (Docker Hub, GCP AR, ECR, GHCR, ACR, custom) attached to the component; a source's credentials are registry access config, not the app's secrets.`,
         `<b>Everything is versioned.</b> Pipelines, <b>components</b> AND <b>subjects</b> are versioned the same way: every <b>behavioural</b> change makes a new immutable version; a <b>name/description</b> edit (and a subject's display-name/metadata) is applied in place and makes no version. Each component/subject detail page lists its versions, like a pipeline's.`,
@@ -3260,7 +3332,7 @@ function confirmDialog(opts){
 const HELP={
   dashboard:{t:'Dashboard',b:`<p><b>What.</b> The at-a-glance health view of your backtesting workspace.</p><p><b>How.</b> It aggregates every result across runs — average quality, per-subject leaderboard, a quality-over-time chart, and recent runs — all computed from the same in-memory data the other pages write to.</p><p><b>Why.</b> Backtesting is about tracking quality <i>day by day</i>; this is where regressions and improvements surface first.</p>`},
   subjects:{t:'Subjects',b:`<p><b>What.</b> The things under test — any model or agent at a remote endpoint. There is <b>no LLM/agent type</b>: a subject is just a <b>name + properties</b>.</p><p><b>How.</b> Properties (base_url, model, api_key, …) each have a <b>type</b> (string/number/boolean/json) and are bound to a stored <b>secret</b> or a literal value. Each <b>connector</b> declares the fields it expects by <b>name + type</b>; a subject is compatible with a connector only if it has all those fields in the matching type — picking one it's missing pops a dialog to add them.</p><p><b>Versioned.</b> Like components &amp; pipelines, a subject is <b>versioned</b>: changing its properties or compatible connectors makes a new version; a name/display-name/metadata edit does not. A pipeline pins a specific subject version.</p><p><b>Why.</b> Subjects are what you score. Free-form property bags (not fixed fields, no type) let any model or agent be tested the same way. Identity = name + properties (metadata excluded).</p>`},
-  components:{t:'Components',b:`<p><b>What.</b> The container images PBIntra orchestrates. Six kinds: <b>connector</b>, <b>storage</b>, <b>runner</b>, <b>scorer</b>, <b>uploader</b> — plus a special <b>scout</b> (not wired into a pipeline).</p><p><b>How.</b> A component is just a prebuilt image URL plus a name (its DB id). It may declare <b>configurable arguments</b> (each required, optional, or optional-with-default — and a default may be a secret); the user fills these in when placing the component in a pipeline. An <b>API schema is optional</b> — upload an OpenAPI spec to document the component (rendered on its detail page); leave it out and nothing is shown. There is no default schema.</p><p><b>Versioned.</b> Like pipelines, a component is <b>versioned</b>: every behavioural edit (image/args/source/compatibility) makes a new version; a name/description edit does not. Its detail page lists all versions, and a pipeline pins a specific one.</p><p><b>Why.</b> Everything is a container so anyone can extend the platform — publish an image that speaks the contract and it plugs in, no core changes.</p>`},
+  components:{t:'Components',b:`<p><b>What.</b> The container images PBIntra orchestrates. Six kinds: <b>connector</b>, <b>storage</b>, <b>runner</b>, <b>scorer</b>, <b>uploader</b> — plus a special <b>scout</b> (not wired into a pipeline).</p><p><b>How.</b> A component is just a prebuilt image URL plus a name (its DB id). It may declare <b>configurable arguments</b> (each required, optional, or optional-with-default — and a default may be a secret); the user fills these in when placing the component in a pipeline. An <b>API schema is optional</b> — upload an OpenAPI spec to document the component (rendered on its detail page); leave it out and nothing is shown. There is no default schema.</p><p><b>Config.</b> Beyond args, a component can declare <b>default environment variables</b> PBIntra sets on its container at launch — a literal, a secret (injected at start), or a <b>PBIntra runtime value</b> (run id/token, endpoint, platform, subject/scorer counts, endpoints…).</p><p><b>Versioned.</b> Like pipelines, a component is <b>versioned</b>: every behavioural edit (image/args/env/source/compatibility) makes a new version; a name/description edit does not. Its detail page lists all versions, and a pipeline pins a specific one.</p><p><b>Why.</b> Everything is a container so anyone can extend the platform — publish an image that speaks the contract and it plugs in, no core changes.</p>`},
   connector:{t:'Connector',b:`<p><b>What.</b> The container that lets PBIntra <b>talk to a subject</b> — the adapter at the end of the wire.</p><p><b>How.</b> It exposes an OpenAI-compatible API (<code>/v1/chat/completions</code>). The runner sends a test case to the connector, which calls the actual subject and returns the response. A connector also declares the <b>fields it expects from a subject</b> (name + type) in its add/edit drawer — a subject is compatible only if it has those fields in the matching type.</p><p><b>Why.</b> Subjects speak many protocols; the connector normalizes them behind one schema so the runner never needs subject-specific code. Only compatible connectors can wire to a subject.</p>`},
   storage:{t:'Storage',b:`<p><b>What.</b> The container that <b>finds and serves test cases</b> to the runner.</p><p><b>How.</b> It exposes <code>/api/testcases</code> (all), <code>/api/testcases/next</code> (cursor/foreach) and <code>/api/testcases/count</code>. Source can be a HuggingFace dataset, S3, Postgres, anything.</p><p><b>Why.</b> Decoupling the data source from the run means the same pipeline can be pointed at any dataset by swapping one container.</p>`},
   runner:{t:'Runner',b:`<p><b>What.</b> The <b>orchestrator</b> that drives one run.</p><p><b>How.</b> It pulls test cases from storage (possibly <b>several</b> storages), sends each to subjects through the connector, then hands responses to the scorer(s). It also receives each subject's <b>metadata</b> (owner, tier, region…) so it can use it if needed. It assembles <code>{ testCase, response, score }</code> and <b>reports each result to the PBIntra hub</b>.</p><p><b>Why.</b> Centralizing the loop in one container keeps connectors/storages/scorers simple and single-purpose. A runner is outbound-only (nothing calls it), so it never needs its own API schema.</p>`},
@@ -3392,6 +3464,7 @@ function openDrawer(kind, editIdx){
     let uploadedSpec=(ec&&ec.openapi)||null;   // a parsed OpenAPI spec (JSON) → renders on the detail page instead of the native contract
     let compArgDefs=(ec&&ec.args)?ec.args.map(a=>({...a})):[];   // configurable-arg schema (REAL-IMPL NOTE 10); edited copy
     let connFieldDefs=(ec&&ec.subjectFields)?ec.subjectFields.map(f=>({...f})):[];   // connector's expected subject fields (name+type)
+    let envDefs=(ec&&ec.env)?ec.env.map(e=>({...e})):[];   // default env vars (name + source: value | secret | pbintra) — REAL-IMPL NOTE 32
     title=ec?'Edit component':'Add component'; sub=ec?'update this container registration':'register a prebuilt container image';
     const compOpts=kd=>components.filter(c=>c.kind===kd && !c.disabled).map(c=>`<option value="${c.name}" ${ec&&(ec[kd+'s']||[]).includes(c.name)?'selected':''}>${c.name}</option>`).join('');
     body=`
@@ -3414,6 +3487,10 @@ function openDrawer(kind, editIdx){
         <div id="compArgRows"></div>
         <span class="add-prop" id="addCompArg">+ add argument</span>
         <div class="hint">Args the user fills in when this component is placed in a pipeline. Mark each <b>required</b>, <b>optional</b>, or <b>optional + default</b> (a default may reference a secret).</div></div>
+      <div class="field"><label>Default environment variables <span style="color:var(--fg-3);font-weight:400">· optional</span></label>
+        <div id="compEnvRows"></div>
+        <span class="add-prop" id="addCompEnv">+ add env var</span>
+        <div class="hint">Env vars PBIntra sets on this container at launch. Each value is a <b>literal</b>, a <b>secret</b> (resolved &amp; injected at start — not baked into the image), or a <b>PBIntra runtime value</b> (run id/token, endpoint, platform, subject/scorer counts, endpoints…). PBIntra always injects the standard wiring vars too; these are your own on top.</div></div>
       <div class="field" id="schemaField"><label>API schema <span style="color:var(--fg-3);font-weight:400">· optional</span></label>
         <div class="hint" id="schemaHint">Optional — upload an OpenAPI spec (JSON) to document this component's API; it renders on the detail page. Purely informational. Leave empty to show nothing.</div>
         <button class="btn ghost sm" type="button" id="uploadSchema" style="margin-top:9px"><svg viewBox="0 0 24 24"><path d="M12 16V4M6 10l6-6 6 6M4 20h16"/></svg> Upload OpenAPI schema…</button></div>
@@ -3479,6 +3556,10 @@ function openDrawer(kind, editIdx){
       const renderConnFieldDefs=()=>{ const box=$('#connFieldRows'); if(!box)return; box.innerHTML=''; connFieldDefs.forEach((f,i)=>box.appendChild(connFieldDefRow(f,i,renderConnFieldDefs,connFieldDefs))); };
       const acf=$('#addConnField'); if(acf) acf.onclick=()=>{ connFieldDefs.push({name:'',type:'string'}); renderConnFieldDefs(); };
       renderConnFieldDefs();
+      // default env vars editor (name + source: literal / secret / PBIntra runtime value) — REAL-IMPL NOTE 32
+      const renderEnvDefs=()=>{ const box=$('#compEnvRows'); if(!box)return; box.innerHTML=''; envDefs.forEach((e,i)=>box.appendChild(envDefRow(e,i,renderEnvDefs,envDefs))); };
+      const aev=$('#addCompEnv'); if(aev) aev.onclick=()=>{ envDefs.push({name:'',src:'value',value:''}); renderEnvDefs(); };
+      renderEnvDefs();
     };
     onsave=()=>{
       const name=$('#f_name').value.trim().replace(/[^A-Za-z0-9_-]/g,'')||'untitled-component';
@@ -3507,6 +3588,9 @@ function openDrawer(kind, editIdx){
         return o;
       });
       if(argsClean.length) obj.args=argsClean;   // configurable-arg schema (REAL-IMPL NOTE 10)
+      // default env vars (drop nameless rows). Each: {name, src:'value'|'secret'|'pbintra', value} (REAL-IMPL NOTE 32)
+      const envClean=envDefs.filter(e=>e.name&&e.name.trim()).map(e=>({name:e.name.trim(),src:e.src||'value',value:e.value||''}));
+      if(envClean.length) obj.env=envClean;
       const source=$('#f_source')?$('#f_source').value:''; if(source) obj.source=source;   // optional private-registry source (REAL-IMPL NOTE 12)
       if(desc) obj.desc=desc;   // optional human description, shown on the detail page
       if(ec){
@@ -3762,6 +3846,35 @@ function connFieldDefRow(f,idx,rerender,arr){
       <div class="prop-del" title="remove">✕</div></div>`;
   row.querySelector('.cad-name').oninput=e=>{ e.target.value=e.target.value.replace(/[^A-Za-z0-9_-]/g,''); f.name=e.target.value; };
   row.querySelector('.cad-type').onchange=e=>f.type=e.target.value;
+  row.querySelector('.prop-del').onclick=()=>{ arr.splice(idx,1); rerender(); };
+  return row;
+}
+// one row of a component's default-env-vars editor: ENV_NAME + source (value | secret | pbintra) + the value (REAL-IMPL NOTE 32)
+function envDefRow(e,idx,rerender,arr){
+  const row=el('div','cargdef-row');
+  const srcOpts=[['value','value'],['secret','secret'],['pbintra','PBIntra value']].map(o=>`<option value="${o[0]}" ${o[0]===e.src?'selected':''}>${o[1]}</option>`).join('');
+  row.innerHTML=`<div class="cargdef-line" style="grid-template-columns:1fr 104px 1.25fr 30px">
+      <input class="env-name" placeholder="ENV_NAME" value="${escapeHtml(e.name||'')}">
+      <select class="env-src">${srcOpts}</select>
+      <span class="env-val-wrap"></span>
+      <div class="prop-del" title="remove">✕</div></div>`;
+  const wrap=row.querySelector('.env-val-wrap');
+  const renderVal=()=>{
+    const s=row.querySelector('.env-src').value;
+    if(s==='pbintra'){
+      // group the runtime values by category for a readable dropdown
+      const groups=[...new Set(PBINTRA_ENV_VARS.map(v=>v.group))];
+      wrap.innerHTML=`<select class="env-val">${groups.map(g=>`<optgroup label="${escapeHtml(g)}">${PBINTRA_ENV_VARS.filter(v=>v.group===g).map(v=>`<option value="${v.id}" ${v.id===e.value?'selected':''}>${escapeHtml(v.label)}</option>`).join('')}</optgroup>`).join('')}</select>`;
+    } else if(s==='secret'){
+      wrap.innerHTML=`<select class="env-val"><option value="">— secret —</option>${secrets.map(sc=>`<option ${sc.name===e.value?'selected':''}>${sc.name}</option>`).join('')}</select>`;
+    } else {
+      wrap.innerHTML=`<input class="env-val" placeholder="literal value" value="${escapeHtml(e.src==='value'?(e.value||''):'')}">`;
+    }
+    const ve=wrap.querySelector('.env-val'); const sync=()=>e.value=ve.value; ve.oninput=sync; ve.onchange=sync; sync();
+  };
+  row.querySelector('.env-name').oninput=ev=>{ ev.target.value=ev.target.value.replace(/[^A-Za-z0-9_]/g,''); e.name=ev.target.value; };
+  row.querySelector('.env-src').onchange=ev=>{ e.src=ev.target.value; e.value=''; renderVal(); };
+  renderVal();
   row.querySelector('.prop-del').onclick=()=>{ arr.splice(idx,1); rerender(); };
   return row;
 }
