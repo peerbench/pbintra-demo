@@ -1063,8 +1063,9 @@ details.adv[open]>summary::before{content:"▾ "}
       VERSION, listed under the same pipeline. Conceptually every version is its own
       pipeline; runs belong to a specific version and all aggregations are per-version.
       Editing a component or subject does NOT auto-touch existing versions: each version
-      keeps the snapshot it pinned at creation (NOTE 13). To adopt a changed component/
-      subject the user MANUALLY creates a new version (edit the pipeline → Save).
+      keeps the component/subject VERSION it pinned at creation (NOTE 13/16). To adopt a
+      newer component/subject version the user MANUALLY creates a new pipeline version
+      (edit the pipeline → Save) and picks it in the node's version selector.
    9. SUBJECT METADATA IS REPORTED TO THE RUNNER. A subject's metadata (owner, tier,
       region…) is NOT part of identity (see 1), but it IS handed to the runner at run
       time so the runner can use it if it needs to (e.g. branch on tier, tag results).
@@ -1084,14 +1085,15 @@ details.adv[open]>summary::before{content:"▾ "}
       AWS ECR, GHCR, Azure ACR, custom) under Settings → Container sources, then attaches that
       source to a component when entering its image URL. Public images need none. Like platform
       creds, a source's credentials are registry access config, not the app's own secrets.
-   13. A VERSION IS A POINT-IN-TIME SNAPSHOT of every component/subject it uses (see NOTE 29 for
-      exactly WHEN it is taken) — not just the wiring + entered arg values, but each component's
-      full DEFINITION at that moment (its arg schema, image tag, compatibility…). Runs inherit
-      their version's snapshot. If a scorer later gains a new argument (even one with a default),
-      older versions/runs must STILL show the old shape with no such argument — so you can always
-      see precisely which pipeline produced those results. (This demo freezes the graph wiring +
-      entered values; the real app must also snapshot each component's definition, not read the
-      component's current one.)
+   13. A PIPELINE VERSION PINS A COMPONENT/SUBJECT VERSION per node (see NOTE 16 — components &
+      subjects are themselves versioned; see NOTE 29 for exactly WHEN the pin is captured). A node
+      stores `compVer` / `subjVer` = the version number it pins; readers resolve that version's
+      IMMUTABLE behavioural def (arg schema, image tag, compatibility / properties). Runs inherit
+      their pipeline version's pins. If a scorer later gains a new argument, older pipeline versions
+      /runs still pin the OLD component version and show the old shape — so you always see precisely
+      which definition produced those results, and it stays reproducible with no extra bookkeeping.
+      (The demo also copies the pinned def onto the node as `compSnap`/`subjSnap` for convenience,
+      but the source of truth is the version number + the entity's immutable version history.)
    14. VERSION CHAINING. The user may CHAIN 2+ versions of the SAME pipeline so their runs
       aggregate as ONE config everywhere (dashboard tile, leaderboard, version score, runs
       list). Chaining is same-pipeline only — never across different pipelines (NOTE 7).
@@ -1101,13 +1103,16 @@ details.adv[open]>summary::before{content:"▾ "}
       tag) re-points to different code whenever the image is rebuilt, which breaks pipeline
       reusability and pollutes run history (the recorded image no longer identifies the code
       that ran). Only the image URL itself is required; the tag is a recommendation.
-   16. KEEP IN SYNC WITH SOURCE (per-node, advanced). A component node may opt OUT of
-      snapshotting: when its `keepSync` is set, it is NOT frozen into the version and always
-      uses the component's CURRENT source definition. Consequence: that pipeline VERSION is
-      NO LONGER REPRODUCIBLE — any later change to the source (image tag/version, args,
-      compatibility) silently flows into this same version and changes what it runs. And if
-      the source adds a REQUIRED arg the node doesn't set, runs FAIL until fixed by hand.
-      Default OFF → reproducible, self-contained versions.
+   16. COMPONENTS & SUBJECTS ARE VERSIONED (exactly like pipelines, NOTE 8). Every BEHAVIOURAL
+      change creates a NEW immutable version: for a component that's img / source / args /
+      compatibility (a runner's connectors/storages/scorers); for a subject that's its properties
+      / compatible-connectors. A NON-behavioural edit — the name or description (and a subject's
+      display-name or metadata) — is applied in place and does NOT create a version. The entity's
+      "current" version is the latest; its flat fields mirror that latest def. A pipeline node pins
+      whichever version it chose (NOTE 13), defaulting to the current one. This REPLACES the old
+      "keep in sync with source" opt-out entirely: there is no live/un-pinned mode — reproducibility
+      is the only mode, and to adopt a component/subject change you either pin the new version in a
+      new pipeline version, or the node was already pinned to `latest`'s number at definition time.
    17. RUNNER ↔ COMPONENT ENDPOINTS (env). The runner talks to the connector/storage/scorer
       containers over the network; it receives their endpoints via PLURAL env vars —
       CONNECTOR_ENDPOINTS, STORAGE_ENDPOINTS, SCORER_ENDPOINTS — each a COMMA-SEPARATED list
@@ -1141,17 +1146,15 @@ details.adv[open]>summary::before{content:"▾ "}
       overlapping schedules can't spawn duplicate runs. (Same behaviour as renisa's triggers.)
       Firing a trigger creates a normal Run of that pipeline (same as the Run button), so all
       run machinery (token, snapshot, reporting) is unchanged — triggers are just the launcher.
-   21. EDITING A COMPONENT THAT IS KEPT IN SYNC. When a user saves an edit to a component AND an
-      EXECUTION-affecting field changed (anything except name & description — img, source, args,
-      or a runner's connectors/storages/scorers), the UI must show a confirm dialog before
-      applying — BUT ONLY IF ≥1 pipeline uses that component with keep-in-sync-with-source on
-      (NOTE 16). Snapshot-pinned usages (the default) already froze the component, so a source
-      edit cannot reach them and they need no warning; keep-sync is the only path that leaks the
-      change into an existing pipeline version. The dialog states: existing runs are unaffected
-      (each froze the component at launch); pinned pipelines are unaffected; but keep-sync
-      pipelines' next run uses the new config, making that version no longer reproducible; so for
-      a behaviour-affecting change they should cut a NEW version (re-snapshots) or turn off
-      keep-sync. Name/description-only edits, and components no pipeline keep-syncs, skip it.
+   21. EDITING A COMPONENT/SUBJECT NEVER TOUCHES EXISTING PIPELINE VERSIONS. A behavioural edit
+      (NOTE 16) just creates a new version of that component/subject; every existing pipeline
+      version keeps the version number it pinned (NOTE 13), so it runs exactly as before — no
+      warning, no reproducibility risk, no user decision needed. A name/description-only edit is
+      applied in place across all versions (name is the DB id / label, shared). To ADOPT the new
+      version in a pipeline, the user opens the builder (creating a new pipeline version) and picks
+      the newer version in that node's version selector — or leaves it pinned to the old one. This
+      is why the old "editing an in-use component" warning dialog (and keep-sync) were removed:
+      versioning makes the safe behaviour automatic.
    22. EVERYTHING IS A CONTAINER; SIX COMPONENT KINDS. Every processing unit is a container
       image. A component = a prebuilt image URL + an id-safe NAME (its DB id — [A-Za-z0-9_-], no
       spaces) + an optional description. Six kinds: CONNECTOR (talks to a subject), STORAGE
@@ -1201,14 +1204,13 @@ details.adv[open]>summary::before{content:"▾ "}
       (NOTE 3) to fetch test data, resolve secrets (NOTE 2) and report results (NOTE 4) — so a
       component author doesn't re-implement the wire protocol by hand. It is a convenience SDK,
       not a requirement: any language can speak the same HTTP contract directly.
-   29. SNAPSHOT IS TAKEN AT PIPELINE-DEFINITION TIME. A pipeline snapshots the CURRENT definition
-      of every component/subject in its graph WHEN THE PIPELINE IS DEFINED — i.e. when a brand-new
-      pipeline is created, or when a new VERSION of an existing one is saved (savePipeline). It is
-      NOT re-taken per run: every run of a given version inherits that version's snapshot, so two
-      runs of the same version always use identical component/subject defs even if the source
-      changed between them. To adopt a source change you save a NEW version (which re-snapshots).
-      The only exception is a node with keep-in-sync-with-source (NOTE 16), which is never
-      snapshotted and always reads the source's current definition. (Refines NOTE 13.)
+   29. THE VERSION PIN IS CAPTURED AT PIPELINE-DEFINITION TIME. When a pipeline is created or a new
+      VERSION is saved (savePipeline), each node's component/subject pin defaults to that entity's
+      CURRENT version at that moment; the builder lets you override it per node to any existing
+      version. The pin is NOT re-resolved per run: every run of a given pipeline version uses the
+      exact versions that pipeline version pinned, even if the component/subject later gains newer
+      versions. To adopt a newer component/subject version you save a NEW pipeline version and pick
+      it in the node's version selector. (Refines NOTE 13; there is no live/un-pinned mode — NOTE 16.)
    30. LIST UX (pagination vs infinite scroll + per-list sort/filter). Long lists must not render
       unbounded. Two patterns by list type:
         • PAGINATED (Prev/Next page controls): Runs, Pipelines, pipeline Versions, run Results,
@@ -1344,6 +1346,51 @@ let components = [
     desc:'Scouts a subject’s endpoint straight from its source — availability, advertised models, rate-limit headers and current latency.'},
 ];
 
+/* ════════════════ component & subject versioning ════════════════ */
+// Like pipelines, components AND subjects are VERSIONED: every BEHAVIOURAL change creates a new immutable
+// version; name/description (and a subject's display-name/metadata) are non-behavioural → edited in place, no
+// new version. A pipeline node PINS a specific version (default = the entity's current version at pipeline-
+// definition time; editable per node in the builder). Older pipeline versions keep the version they pinned, so
+// they stay reproducible — this REPLACES the old "keep in sync with source" opt-out. See REAL-IMPL NOTE 13/16/21/29.
+// The entity's FLAT fields (c.img/c.args/…, s.connectors/s.properties) always mirror its LATEST version's def.
+function compDef(c){ return {img:c.img, source:c.source, args:JSON.parse(JSON.stringify(c.args||[])),
+  connectors:c.connectors?[...c.connectors]:undefined, storages:c.storages?[...c.storages]:undefined, scorers:c.scorers?[...c.scorers]:undefined}; }
+function subjDef(s){ return {connectors:[...(s.connectors||[])], properties:JSON.parse(JSON.stringify(s.properties||[]))}; }
+// stable behavioural signature → equal sig means an edit is name/desc-only, so it does NOT bump the version
+function subjExecSig(s){ const d=subjDef(s); return JSON.stringify({c:[...d.connectors].sort(), p:d.properties}); }
+// resolve the behavioural def pinned at a version number (fallback = current flat def)
+function compDefAt(c, ver){ const v=((c&&c.versions)||[]).find(x=>x.version===ver); return v?v.def:compDef(c); }
+function subjDefAt(s, ver){ const v=((s&&s.versions)||[]).find(x=>x.version===ver); return v?v.def:subjDef(s); }
+// seed: give every component/subject a v1 capturing its ORIGINAL behavioural def (before any edit is possible)
+components.forEach(c=>{ if(!c.versions){ c.version=1; c.versions=[{version:1,createdAt:'—',note:'initial',def:compDef(c)}]; } });
+subjects.forEach(s=>{ if(!s.versions){ s.version=1; s.versions=[{version:1,createdAt:'—',note:'initial',def:subjDef(s)}]; } });
+// DEMO history: a few entities carry >1 version so the detail-page version list is populated. The CURRENT flat
+// def is always the newest version; older versions synthesize an earlier def (older image tag / fewer args).
+;(()=>{
+  // push OLDER versions BELOW the current one. `older` = [{createdAt,note,def:overrides}], newest-first.
+  const seedComp=(name, older)=>{ const c=components.find(x=>x.name===name); if(!c) return;
+    const latest=1+older.length; c.version=latest;
+    c.versions=[{version:latest,createdAt:'—',note:'current',def:compDef(c)}];
+    older.forEach((o,i)=>c.versions.push({version:latest-1-i,createdAt:o.createdAt,note:o.note,def:{...compDef(c),...o.def}})); };
+  const seedSubj=(id, older)=>{ const s=subjects.find(x=>x.id===id); if(!s) return;
+    const latest=1+older.length; s.version=latest;
+    s.versions=[{version:latest,createdAt:'—',note:'current',def:subjDef(s)}];
+    older.forEach((o,i)=>s.versions.push({version:latest-1-i,createdAt:o.createdAt,note:o.note,def:{...subjDef(s),...o.def}})); };
+  // single-turn runner: only the image tag moved between versions (compat/args unchanged → seed pipelines stay valid)
+  seedComp('single-turn', [{createdAt:'16d ago',note:'initial',def:{img:'ghcr.io/peerbench/runner-single:1.2.0'}}]);
+  // llm-judge scorer: args grew over time (v1 had 2, v2 added the api-key, v3 added pass_threshold)
+  seedComp('llm-judge', [
+    {createdAt:'9d ago', note:'add judge_api_key secret', def:{img:'ghcr.io/peerbench/scorer-llm-judge:1.0.5',
+      args:[{name:'judge_model',type:'string',req:'required'},{name:'rubric',type:'string',req:'optional'},{name:'judge_api_key',type:'string',req:'default',default:'OPENROUTER_API_KEY',secret:true}]}},
+    {createdAt:'20d ago',note:'initial', def:{img:'ghcr.io/peerbench/scorer-llm-judge:1.0.0',
+      args:[{name:'judge_model',type:'string',req:'required'},{name:'rubric',type:'string',req:'optional'}]}},
+  ]);
+  // subject a: an earlier version pointed at an older model + a non-zero temperature
+  seedSubj('a', [{createdAt:'12d ago',note:'initial', def:{properties:[
+    {key:'base_url',kind:'value',value:'openrouter.ai/api/v1'},{key:'model',kind:'value',value:'anthropic/claude-sonnet-4'},
+    {key:'api_key',kind:'secret',value:'OPENROUTER_API_KEY'},{key:'temperature',kind:'value',value:'0.7'}]}}]);
+})();
+
 // Self-contained HTML doc for the OpenAPI iframe: loads Scalar from the CDN and renders the spec
 // INLINE (no fetch of the spec → file:// safe). The iframe isolates Scalar's heavy CSS from our
 // theme. Scalar's "modern" layout fills its container and scrolls INTERNALLY, so the iframe keeps
@@ -1466,19 +1513,25 @@ pipelines.forEach(p=>{ (p.versions||[]).forEach(v=>{ if(!v.graph) v.graph=p.grap
 // snapshot of its component (args/img/source/compat) and subject (properties/connectors); read-only viewers use it.
 // (Refreshed whenever a NEW version is created — savePipeline — capturing the then-current defs.)
 function snapshotNode(n){
-  if(n.type==='subject'){ const s=subjects.find(x=>x.id===n.sid); if(s) n.subjSnap={name:s.name,displayName:s.displayName,connectors:[...(s.connectors||[])],properties:JSON.parse(JSON.stringify(s.properties||[])),meta:JSON.parse(JSON.stringify(s.meta||[]))}; return; }
+  if(n.type==='subject'){ const s=subjects.find(x=>x.id===n.sid); if(!s) return;
+    const ver=n.subjVer||s.version||1; n.subjVer=ver;   // PIN the version (default = subject's current version)
+    const d=subjDefAt(s, ver);
+    // name/displayName/meta are non-behavioural → take the CURRENT entity values; connectors/properties from the pinned version
+    n.subjSnap={name:s.name,displayName:s.displayName,version:ver,connectors:[...(d.connectors||[])],properties:JSON.parse(JSON.stringify(d.properties||[])),meta:JSON.parse(JSON.stringify(s.meta||[]))};
+    return; }
   if(n.type==='pbintra'||!n.comp) return;
-  // "Keep in sync with source": opt OUT of snapshotting → readers fall back to the component's CURRENT def (NOTE 16)
-  if(n.keepSync){ delete n.compSnap; return; }
   const c=components.find(x=>x.name===n.comp); if(!c) return;
-  n.compSnap={img:c.img, source:c.source, desc:c.desc, args:JSON.parse(JSON.stringify(c.args||[])),
-    connectors:c.connectors?[...c.connectors]:undefined, storages:c.storages?[...c.storages]:undefined, scorers:c.scorers?[...c.scorers]:undefined};
+  const ver=n.compVer||c.version||1; n.compVer=ver;   // PIN the version (default = component's current version)
+  const d=compDefAt(c, ver);
+  // desc is non-behavioural → current; img/source/args/compat from the pinned version def
+  n.compSnap={version:ver, img:d.img, source:d.source, desc:c.desc, args:JSON.parse(JSON.stringify(d.args||[])),
+    connectors:d.connectors?[...d.connectors]:undefined, storages:d.storages?[...d.storages]:undefined, scorers:d.scorers?[...d.scorers]:undefined};
 }
 function snapshotGraph(graph){ if(graph&&graph.nodes) graph.nodes.forEach(snapshotNode); return graph; }
-// DEMO: one seed pipeline keeps its runner in sync with source (must be set BEFORE snapshotting so those nodes are
-// left un-pinned) — gives the "editing an in-use component" warning (NOTE 21) a live example. Only keep-sync usage
-// is affected by a source edit; snapshot-pinned pipelines are not, so only these should be warned about.
-pipelines.filter(p=>p.id==='p3').forEach(p=>{ [p.graph,...(p.versions||[]).map(v=>v.graph)].filter(Boolean).forEach(g=>(g.nodes||[]).forEach(n=>{ if(n.type==='runner') n.keepSync=true; })); });
+// DEMO: one seed pipeline PINS an OLDER component version (set BEFORE snapshotting so the pin is honoured) — shows
+// that a pipeline version keeps whatever component version it pinned even after the component moves on (NOTE 13/29).
+// p2's runner stays on single-turn v1 while the component's current is v2.
+pipelines.filter(p=>p.id==='p2').forEach(p=>{ [p.graph,...(p.versions||[]).map(v=>v.graph)].filter(Boolean).forEach(g=>(g.nodes||[]).forEach(n=>{ if(n.type==='runner'&&n.comp==='single-turn') n.compVer=1; })); });
 // baseline: snapshot every seed pipeline/version graph with the ORIGINAL defs (nothing edited yet)
 pipelines.forEach(p=>{ snapshotGraph(p.graph); (p.versions||[]).forEach(v=>{ if(v.graph) snapshotGraph(v.graph); }); });
 
@@ -1634,16 +1687,8 @@ const pipelineById = id => pipelines.find(p=>p.id===id);
 // pipelines that use a component in KEEP-IN-SYNC-WITH-SOURCE mode (across current + version graphs) — the ONLY ones
 // affected by editing the component's source (snapshot-pinned usages keep their frozen copy). Drives the NOTE 21
 // Save warning. Returns distinct pipeline names.
-function pipelinesKeepSyncingComponent(name){
-  const used=[];
-  pipelines.forEach(p=>{
-    const graphs=[p.graph, ...(p.versions||[]).map(v=>v.graph)].filter(Boolean);
-    if(graphs.some(g=>(g.nodes||[]).some(n=>n.comp===name && n.keepSync))) used.push(p.name);
-  });
-  return used;
-}
 // signature of the EXECUTION-affecting fields of a component (everything except name & description). Used to decide
-// whether a component edit actually changes how it runs — if only name/desc changed, no reproducibility warning.
+// whether a component edit is BEHAVIOURAL — if so it creates a new version; a name/desc-only edit does not.
 function componentExecSig(c){
   return JSON.stringify({
     kind:c.kind, img:c.img||'', source:c.source||'',
@@ -2078,7 +2123,7 @@ function renderComponents(){
     const card=el('div','panel comp reveal'); card.style.animationDelay=(i*.04)+'s';
     const col=compColor(c.kind);
     card.innerHTML=`<div class="ci" style="color:${col}"><i data-lucide="${lucideName[c.kind]}"></i></div>
-      <div class="body"><div class="n">${c.name} <span class="tag ${c.kind}">${c.kind}</span></div>
+      <div class="body"><div class="n">${c.name} <span class="tag ${c.kind}">${c.kind}</span>${(!c.builtin&&(c.versions||[]).length>1)?` <span class="tag" style="color:var(--pbintra);border-color:rgba(62,207,142,.35)" title="${c.versions.length} versions">v${c.version||1}</span>`:''}</div>
         <div class="img">${c.img}</div>${c.desc?`<div style="font-size:11.5px;color:var(--fg-2);margin-top:5px;line-height:1.4">${escapeHtml(c.desc)}</div>`:''}</div>
       ${c.disabled?'<span class="pill" style="margin-left:auto;color:var(--fg-3);border-color:var(--line-2)"><span class="ld"></span>disabled · soon</span>':c.builtin?'<span class="pill" style="margin-left:auto;color:var(--violet);border-color:rgba(157,140,255,.4)"><span class="ld"></span>built-in</span>':'<span class="pill done" style="margin-left:auto"><span class="ld"></span>ready</span>'}`;
     card.style.cursor='pointer'; card.onclick=()=>openComponent(components.indexOf(c));
@@ -2200,6 +2245,7 @@ function renderPipelines(){
   mountPager('#pipelinesPager', pipelines.length, pipesPage, PAGE.pipelines, p=>{ pipesPage=p; renderPipelines(); });
 }
 let pipeVerSel={};   // pipeline id → which version is being inspected on the detail page (default = current)
+let compVerSel={}, subjVerSel={};   // component name / subject id → which version is inspected on its detail page
 // version-chaining is a MODE: the per-row checkboxes only render while it's active (click "Chain versions" to enter,
 // pick 2+, confirm to finish). No point rendering checkboxes the rest of the time.
 let chainMode=false, chainModePid=null;
@@ -2397,7 +2443,8 @@ function openRoNode(n){
   } else if(n.type==='subject'){
     // prefer the point-in-time subject snapshot pinned on this version/run; fall back to current subject
     const snap=n.subjSnap, s=subjById(n.sid);
-    title='Subject'; sub=snap?'read-only · as of this version':'read-only';
+    const pinVer = snap?snap.version:(n.subjVer||(s?s.version:null));
+    title='Subject'; sub=(pinVer!=null?'read-only · pinned v'+pinVer:(snap?'read-only · as of this version':'read-only'));
     const label = snap?(snap.displayName||snap.name):(s?subjLabel(s):'');
     const conns = snap?snap.connectors:(s?s.connectors:[]);
     const propsArr = snap?snap.properties:(s?s.properties:[]);
@@ -2405,14 +2452,15 @@ function openRoNode(n){
     else {
       const props=(propsArr||[]).map(p=>`<tr><td>${escapeHtml(p.key)}</td><td>${p.kind==='secret'?`<span class="atag sec">🔒 secret</span> <span class="mono" style="color:var(--fg-2)">${escapeHtml(p.value)}</span>`:`<span class="mono" style="color:var(--fg-2)">${escapeHtml(p.value)}</span>`}</td></tr>`).join('');
       body=`
-        <div class="field"><label>Subject</label><div class="ro-val">${escapeHtml(label)}</div></div>
+        <div class="field"><label>Subject</label><div class="ro-val">${escapeHtml(label)}${pinVer!=null?` <span class="tag" style="color:var(--pbintra);border-color:rgba(62,207,142,.35)">v${pinVer}</span>`:''}</div></div>
         <div class="field"><label>Compatible connectors</label><div class="ro-val">${(conns||[]).map(c=>escapeHtml(c)).join(' · ')||'—'}</div></div>
         <div class="field"><label>Properties</label><table class="kv">${props||'<tr><td>—</td><td>no properties</td></tr>'}</table></div>`;
     }
   } else {
     // prefer the point-in-time component snapshot (args/img/source/compat as of this version) over current defs
     const comp=components.find(c=>c.name===n.comp), snap=n.compSnap;
-    title=n.type.charAt(0).toUpperCase()+n.type.slice(1); sub=n.keepSync?'read-only · live (kept in sync with source)':(snap?'read-only · as of this version':'read-only');
+    const pinVer = snap?snap.version:(n.compVer||(comp?comp.version:null));
+    title=n.type.charAt(0).toUpperCase()+n.type.slice(1); sub=(pinVer!=null?'read-only · pinned v'+pinVer:(snap?'read-only · as of this version':'read-only'));
     const decl=snap?snap.args:compArgs(n.comp), vals=n.argVals||{};
     const img=snap?snap.img:(comp?comp.img:''), srcId=snap?snap.source:(comp?comp.source:undefined);
     const compat=snap||comp||{};
@@ -2428,9 +2476,8 @@ function openRoNode(n){
     const cdesc=snap?snap.desc:(comp?comp.desc:'');
     body=`
       ${cdesc?`<p class="subtitle" style="margin:0 0 6px">${escapeHtml(cdesc)}</p>`:''}
-      <div class="field"><label>${n.type} container</label><div class="ro-val">${escapeHtml(n.comp||'—')}${img?`<div class="mono" style="color:var(--fg-3);font-size:11px;margin-top:3px">${escapeHtml(img)}${src}</div>`:''}</div></div>
+      <div class="field"><label>${n.type} container</label><div class="ro-val">${escapeHtml(n.comp||'—')}${pinVer!=null?` <span class="tag" style="color:var(--pbintra);border-color:rgba(62,207,142,.35)">v${pinVer}</span>`:''}${comp&&pinVer!=null&&pinVer!==comp.version?` <span style="color:var(--fg-3);font-size:10.5px">· current is v${comp.version}</span>`:''}${img?`<div class="mono" style="color:var(--fg-3);font-size:11px;margin-top:3px">${escapeHtml(img)}${src}</div>`:''}</div></div>
       <div class="field"><label>Run on platform</label><div class="ro-val">${escapeHtml(platformLabel(n.platform||defaultPlatform))}</div></div>
-      ${n.keepSync?`<div class="field"><label>Keep in sync with source</label><div class="ro-val"><span class="trig-status on">On</span> <span style="color:var(--fg-3);font-size:11.5px">not pinned — uses the component's current definition, so this version isn't reproducible</span></div></div>`:''}
       <div class="field"><label>Arguments</label>${decl.length?`<table class="kv">${argRows}</table>`:'<div class="empty" style="padding:10px">this component declares no arguments</div>'}</div>
       ${(n.type==='runner')?`<div class="field"><label>Compatible</label><div class="ro-val" style="font-size:12px;line-height:1.7">connectors: ${(compat.connectors||[]).join(', ')||'—'}<br>storages: ${(compat.storages||[]).join(', ')||'—'}<br>scorers: ${(compat.scorers||[]).join(', ')||'—'}</div></div>`:''}`;
   }
@@ -2571,15 +2618,28 @@ function jsonHtml(v, path, hl, ind){
 }
 
 /* ════════════════ subject / component detail ════════════════ */
+function selectSubjectVersion(id, ver){ subjVerSel[id]=ver; openSubject(id); }
 function openSubject(id){
   const s=subjById(id); if(!s) return; go('subjectDetail');
   const usedIn=runs.filter(r=>r.subjects.includes(id));
-  // compatible connectors declared on the subject → shown as an editable list (edit via the drawer)
+  // subjects are VERSIONED like pipelines: pick which version to inspect (default = current). Properties + compatible
+  // connectors below reflect the SELECTED version's behavioural def; name/display-name/metadata are shared across versions.
+  const svers=(s.versions&&s.versions.length)?s.versions:[{version:s.version||1,createdAt:'—',note:'initial',def:subjDef(s)}];
+  const selVer=(subjVerSel[id]!=null && svers.some(v=>v.version===subjVerSel[id]))?subjVerSel[id]:(s.version||1);
+  const sdef=subjDefAt(s, selVer);
   // subject metadata: extra, identity-neutral info shown as a plain key/value table
   const metaKv=(s.meta||[]).map(m=>`<tr><td>${escapeHtml(m.key)}</td><td><span class="mono" style="color:var(--fg-2)">${escapeHtml(m.value)}</span></td></tr>`).join('');
-  const props=(s.properties||[]).map(p=>`<tr><td>${p.key}</td><td>${p.kind==='secret'
+  const props=(sdef.properties||[]).map(p=>`<tr><td>${p.key}</td><td>${p.kind==='secret'
     ?`<span class="tag" style="color:var(--amber);border-color:rgba(245,177,61,.3)">secret</span> <span class="mono" style="color:var(--fg-2)">${p.value}</span>`
     :`<span class="mono" style="color:var(--fg)">${p.value}</span>`}</td></tr>`).join('');
+  const svRow=v=>`<tr class="ver-row${v.version===selVer?' sel':''}" style="cursor:pointer" onclick="selectSubjectVersion('${s.id}',${v.version})">
+      <td><b>v${v.version}</b>${v.version===(s.version||1)?' <span class="tag" style="color:var(--pbintra);border-color:rgba(62,207,142,.35)">current</span>':''}</td>
+      <td><span class="mono" style="color:var(--fg-3)">${v.createdAt}${v.note&&v.note!=='current'?' · '+escapeHtml(v.note):''}</span></td>
+      <td class="mono">${(v.def.properties||[]).length} props</td>
+      <td class="mono">${(v.def.connectors||[]).length} connectors</td></tr>`;
+  const versionsSection=`
+    <div class="section-h"><h2>Versions</h2><div class="ln"></div><span style="font-family:var(--mono);font-size:11px;color:var(--fg-3)">every behavioural edit makes a new version · click one to inspect · pipelines pin a version</span></div>
+    <div class="panel reveal"><table class="kv">${svers.map(svRow).join('')}</table></div>`;
   const used=usedIn.length?usedIn.map(r=>`<div class="rrun" style="margin:8px 0 0" onclick="openRun('${r.id}')">
       <div class="ti"><div class="n">${(pipelineById(r.pipelineId)||{}).name||'—'}</div><div class="m">${r.results} results · ${r.started}</div></div>${statusPill(r)}</div>`).join('')
     :'<div class="empty" style="padding:24px"><svg viewBox="0 0 24 24"><path d="M5 3l14 9-14 9z"/></svg><p>Not used in any run yet</p></div>';
@@ -2594,39 +2654,57 @@ function openSubject(id){
     <div class="panel reveal detail-hero">
       <div class="big-av">${initials(subjLabel(s))}</div>
       <div style="flex:1;min-width:200px">
-        <div style="display:flex;align-items:center;gap:10px"><div style="font-family:var(--disp);font-weight:800;font-size:24px">${escapeHtml(subjLabel(s))}</div>${s.displayName?`<span class="tag">id: ${escapeHtml(s.name)}</span>`:''}</div>
-        <div class="mono" style="color:var(--fg-3);font-size:12px;margin-top:6px">${(s.properties||[]).length} properties · ${secretsOf(s).length} secrets · ${(s.connectors||[]).length} connectors</div></div>
+        <div style="display:flex;align-items:center;gap:10px"><div style="font-family:var(--disp);font-weight:800;font-size:24px">${escapeHtml(subjLabel(s))}</div>${s.displayName?`<span class="tag">id: ${escapeHtml(s.name)}</span>`:''}<span class="tag" style="color:var(--pbintra);border-color:rgba(62,207,142,.35)">v${s.version||1}${(s.versions||[]).length>1?' · '+(s.versions||[]).length+' versions':''}</span></div>
+        <div class="mono" style="color:var(--fg-3);font-size:12px;margin-top:6px">${(sdef.properties||[]).length} properties · ${(sdef.properties||[]).filter(p=>p.kind==='secret').length} secrets · ${(sdef.connectors||[]).length} connectors</div></div>
       <button class="btn ghost sm" onclick="openDrawer('subject',${subjects.indexOf(s)})"><svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg> Edit</button>
     </div>
+    ${versionsSection}
     <div class="section-h"><h2>Used in pipelines</h2><div class="ln"></div><span style="font-family:var(--mono);font-size:11px;color:var(--fg-3)">score is measured per pipeline version — never combined across pipelines</span></div>
     <div class="panel reveal">${pipeList}</div>
-    <div class="section-h"><h2>Compatible connectors</h2><div class="ln"></div><span style="font-family:var(--mono);font-size:11px;color:var(--fg-3)">can only be wired to these in a run · Edit to change</span></div>
-    <div class="panel reveal"><table class="kv"><tr><td>Connectors</td><td>${compLinkList(s.connectors,'connector')}</td></tr></table></div>
-    <div class="section-h"><h2>Properties</h2><div class="ln"></div><span style="font-family:var(--mono);font-size:11px;color:var(--fg-3)">each bound to a secret or a literal value</span></div>
+    <div class="section-h"><h2>Compatible connectors</h2><div class="ln"></div><span style="font-family:var(--mono);font-size:11px;color:var(--fg-3)">${selVer===(s.version||1)?'current (v'+selVer+')':'as of v'+selVer} · can only be wired to these in a run</span></div>
+    <div class="panel reveal"><table class="kv"><tr><td>Connectors</td><td>${compLinkList(sdef.connectors,'connector')}</td></tr></table></div>
+    <div class="section-h"><h2>Properties</h2><div class="ln"></div><span style="font-family:var(--mono);font-size:11px;color:var(--fg-3)">v${selVer} · each bound to a secret or a literal value</span></div>
     <div class="panel reveal"><table class="kv">${props||'<tr><td>—</td><td>no properties</td></tr>'}</table></div>
     ${(s.meta&&s.meta.length)?`<div class="section-h"><h2>Metadata</h2><div class="ln"></div><span style="font-family:var(--mono);font-size:11px;color:var(--fg-3)">extra info · not part of identity</span></div>
     <div class="panel reveal"><table class="kv">${metaKv}</table></div>`:''}`;
   animMeters($('[data-page="subjectDetail"]'));
   drawIcons();
 }
+function selectComponentVersion(name, ver){ compVerSel[name]=ver; const i=components.findIndex(c=>c.name===name); if(i>=0) openComponent(i); }
 function openComponent(idx){
   const c=components[idx]; if(!c) return; go('componentDetail');
   const col=compColor(c.kind);
   // API schema is OPTIONAL metadata — only an uploaded OpenAPI spec is ever shown; no default/native schema
   const spec=c.openapi||null;
   const dark=document.documentElement.getAttribute('data-theme')==='dark';
+  // components are VERSIONED like pipelines: pick which version to inspect (default = current). The Details + Arguments
+  // sections below reflect the SELECTED version's behavioural def (image/source/compat/args); name/desc are shared.
+  const vers=(c.versions&&c.versions.length)?c.versions:[{version:c.version||1,createdAt:'—',note:'initial',def:compDef(c)}];
+  const selVer=(compVerSel[c.name]!=null && vers.some(v=>v.version===compVerSel[c.name]))?compVerSel[c.name]:(c.version||1);
+  const vdef=compDefAt(c, selVer);
   // each compatible component shows its OWN name as a link to that component's detail page (not an uppercased badge)
   const compRow=(label,arr,k)=>`<tr><td>${label}</td><td>${compLinkList(arr,k)}</td></tr>`;
+  // Versions section (mirrors pipeline detail): click a row to inspect that version. Behavioural edits add versions;
+  // name/description edits do not. Non-versioned built-ins (pbintra storage) never show this.
+  const verRow=v=>`<tr class="ver-row${v.version===selVer?' sel':''}" style="cursor:pointer" onclick="selectComponentVersion('${c.name}',${v.version})">
+      <td><b>v${v.version}</b>${v.version===(c.version||1)?' <span class="tag" style="color:var(--pbintra);border-color:rgba(62,207,142,.35)">current</span>':''}</td>
+      <td><span class="mono" style="color:var(--fg-3)">${v.createdAt}${v.note&&v.note!=='current'?' · '+escapeHtml(v.note):''}</span></td>
+      <td><span class="mono" style="color:var(--fg-3);font-size:11px">${escapeHtml(imageTag(v.def.img||'')||'—')}</span></td>
+      <td class="mono">${(v.def.args||[]).length} arg${(v.def.args||[]).length===1?'':'s'}</td></tr>`;
+  const versionsSection = (c.builtin) ? '' : `
+    <div class="section-h"><h2>Versions</h2><div class="ln"></div><span style="font-family:var(--mono);font-size:11px;color:var(--fg-3)">every behavioural edit makes a new version · click one to inspect · pipelines pin a version</span></div>
+    <div class="panel reveal"><table class="kv">${vers.map(verRow).join('')}</table></div>`;
   // "Details": everything entered when the component was added. The API-schema row appears ONLY when an
   // OpenAPI spec was uploaded (there is no default schema); a runner instead lists what it can drive.
   const detailsSection = `
-    <div class="section-h"><h2>Details</h2><div class="ln"></div><span style="font-family:var(--mono);font-size:11px;color:var(--fg-3)">everything set when this component was added</span></div>
+    <div class="section-h"><h2>Details</h2><div class="ln"></div><span style="font-family:var(--mono);font-size:11px;color:var(--fg-3)">${selVer===(c.version||1)?'current version (v'+selVer+')':'as of v'+selVer}</span></div>
     <div class="panel reveal"><table class="kv">
       <tr><td>Kind</td><td><span class="tag ${c.kind}">${c.kind}</span></td></tr>
-      <tr><td>Container image</td><td><span class="mono" style="color:var(--fg-2)">${c.img}</span>${imageIsLatest(c.img)?' <span class="atag" style="color:var(--amber);border-color:rgba(240,180,41,.4)">⚠ :latest — not reproducible</span>':''}</td></tr>
-      ${c.source?`<tr><td>Container source</td><td><span class="mono" style="color:var(--fg-2)">${escapeHtml(containerSourceLabel(c.source))}</span> <span style="color:var(--fg-3);font-size:11px">· private registry</span></td></tr>`:''}
+      <tr><td>Version</td><td><span class="tag" style="color:var(--pbintra);border-color:rgba(62,207,142,.35)">v${selVer}</span>${selVer!==(c.version||1)?` <span style="color:var(--fg-3);font-size:11px">· current is v${c.version||1}</span>`:''}</td></tr>
+      <tr><td>Container image</td><td><span class="mono" style="color:var(--fg-2)">${escapeHtml(vdef.img||'—')}</span>${imageIsLatest(vdef.img||'')?' <span class="atag" style="color:var(--amber);border-color:rgba(240,180,41,.4)">⚠ :latest — not reproducible</span>':''}</td></tr>
+      ${vdef.source?`<tr><td>Container source</td><td><span class="mono" style="color:var(--fg-2)">${escapeHtml(containerSourceLabel(vdef.source))}</span> <span style="color:var(--fg-3);font-size:11px">· private registry</span></td></tr>`:''}
       ${spec?`<tr><td>API schema</td><td>uploaded OpenAPI · <span class="mono" style="color:var(--fg-2)">${escapeHtml((c.openapi.info&&c.openapi.info.title)||'Uploaded API')}</span></td></tr>`:''}
-      ${c.kind==='runner'?compRow('Compatible connectors',c.connectors,'connector')+compRow('Compatible storages',c.storages,'storage')+compRow('Compatible scorers',c.scorers,'scorer'):''}
+      ${c.kind==='runner'?compRow('Compatible connectors',vdef.connectors,'connector')+compRow('Compatible storages',vdef.storages,'storage')+compRow('Compatible scorers',vdef.scorers,'scorer'):''}
     </table></div>`;
   // configurable args this component declares (REAL-IMPL NOTE 10) — the user fills these in when building a pipeline
   const argRow=a=>{
@@ -2636,11 +2714,11 @@ function openComponent(idx){
       : '<span style="color:var(--fg-3)">—</span>';
     return `<tr><td><span class="mono" style="color:var(--fg)">${escapeHtml(a.name)}</span></td><td><span class="atag ty">${a.type}</span></td><td>${reqLbl}</td><td>${def}</td></tr>`;
   };
-  const argsSection = (c.args&&c.args.length) ? `
-    <div class="section-h"><h2>Arguments</h2><div class="ln"></div><span style="font-family:var(--mono);font-size:11px;color:var(--fg-3)">filled in when placed in a pipeline</span></div>
+  const argsSection = (vdef.args&&vdef.args.length) ? `
+    <div class="section-h"><h2>Arguments</h2><div class="ln"></div><span style="font-family:var(--mono);font-size:11px;color:var(--fg-3)">v${selVer} · filled in when placed in a pipeline</span></div>
     <div class="panel reveal" style="padding:6px 6px 2px"><table class="tbl">
       <thead><tr><th>Name</th><th>Type</th><th>Requirement</th><th>Default</th></tr></thead>
-      <tbody>${c.args.map(argRow).join('')}</tbody></table></div>` : '';
+      <tbody>${vdef.args.map(argRow).join('')}</tbody></table></div>` : '';
   // built-in components (pbintra storage) are locked: no Edit
   const rightSide = c.disabled
     ? `<span class="pill" style="color:var(--fg-3);border-color:var(--line-2)"><span class="ld"></span>disabled · soon</span>`
@@ -2655,14 +2733,15 @@ function openComponent(idx){
   $('#componentDetailBody').innerHTML=`
     <div class="panel reveal detail-hero"${c.desc?' style="align-items:flex-start"':''}>
       <div class="big-av" style="color:${col}"><i data-lucide="${lucideName[c.kind]}" width="28" height="28"></i></div>
-      <div style="flex:1;min-width:200px"><div style="display:flex;align-items:center;gap:10px"><div style="font-family:var(--disp);font-weight:800;font-size:24px">${c.name}</div><span class="tag ${c.kind}">${c.kind}</span></div>
-        <div class="mono" style="color:var(--fg-3);font-size:12px;margin-top:6px">${c.img}</div>
+      <div style="flex:1;min-width:200px"><div style="display:flex;align-items:center;gap:10px"><div style="font-family:var(--disp);font-weight:800;font-size:24px">${c.name}</div><span class="tag ${c.kind}">${c.kind}</span>${c.builtin?'':`<span class="tag" style="color:var(--pbintra);border-color:rgba(62,207,142,.35)">v${c.version||1}${(c.versions||[]).length>1?' · '+(c.versions||[]).length+' versions':''}</span>`}</div>
+        <div class="mono" style="color:var(--fg-3);font-size:12px;margin-top:6px">${escapeHtml(vdef.img||c.img||'')}</div>
         ${c.desc?`<p style="color:var(--fg-2);font-size:13px;line-height:1.55;margin:11px 0 0;max-width:640px">${escapeHtml(c.desc)}</p>`:''}</div>
       ${rightSide}
     </div>
     ${c.builtin?`<div class="panel reveal" style="border-color:var(--line-2)"><div style="display:flex;align-items:center;gap:10px"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--fg-3)" stroke-width="1.8" style="flex:none"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg><span style="color:var(--fg-2)">Built-in storage that reads straight from the PBIntra database. <b style="color:var(--fg)">Not usable yet — coming soon.</b> Shown as a placeholder; it can't be added to a pipeline.</span></div></div>`:''}
     ${c.kind==='uploader'?`<div class="panel reveal" style="border-color:var(--line-2)"><div style="display:flex;align-items:center;gap:10px"><i data-lucide="upload" style="color:var(--uploader);flex:none"></i><span style="color:var(--fg-2)">PBIntra pushes every finished result to this uploader, so it must implement the <b style="color:var(--fg)">PBIntra result-ingest API</b> — a fixed contract (<b style="color:var(--fg)">not yet finalised</b>). Unlike connectors/storages/scorers, an uploader does <b style="color:var(--fg)">not</b> take a custom OpenAPI schema.</span></div></div>`:''}
     ${c.kind==='scout'?`<div class="panel reveal" style="border-color:var(--line-2)"><div style="display:flex;align-items:flex-start;gap:10px"><i data-lucide="radar" style="color:var(--scout);flex:none;margin-top:2px"></i><span style="color:var(--fg-2)">A <b style="color:var(--scout)">scout</b> is a <b style="color:var(--fg)">special</b> component — it is <b style="color:var(--fg)">not</b> placed in a pipeline graph. Given one <b style="color:var(--fg)">subject</b>, it collects live data <b style="color:var(--fg)">about that subject from the subject's own source</b> and returns it over the <b style="color:var(--fg)">fixed PBIntra scout API</b> (a contract, <b style="color:var(--fg)">not yet finalised</b>) — so, like an uploader, it takes <b style="color:var(--fg)">no</b> custom OpenAPI schema. <b style="color:var(--fg)">When and how it runs is decided elsewhere</b> (TBD) — for now it is only registered and listed.</span></div></div>`:''}
+    ${versionsSection}
     ${detailsSection}
     ${argsSection}
     ${apiSection}`;
@@ -3029,7 +3108,7 @@ function renderDocs(){
       <p class="subtitle" style="margin-top:0">A <b>pipeline</b> is the <b>named, reusable graph</b> you assemble on the canvas. <b>Every edit — even the smallest — makes a new version</b>; each version is effectively its own pipeline, listed under the same name. A <b>run</b> is one execution of a specific <b>version</b> (no name of its own). On a pipeline's detail you can browse versions, ${btn('Run','primary')} any version, or ${btn('Edit → new','ghost')} from one to base a new version on it.</p>
       <div class="doc-eg"><span class="eg-lbl">a pipeline's graph (read-only · scroll to zoom, drag to pan)</span><div id="docsGraph" style="overflow:auto"></div></div>
       <div class="doc-note"><b>Scores are per pipeline version</b> — never combined across pipelines. A subject scoring 50 in pipeline A and 10 in B has no meaningful single number, so every leaderboard / average is scoped to one version (pick it with the selector on the Dashboard).</div>
-      <div class="doc-note"><b>A version snapshots its components when it is defined.</b> The moment you save a pipeline — new pipeline or new version — PBIntra freezes each component's &amp; subject's <b>current definition</b> into that version. Every run of the version reuses that snapshot (never re-taken per run), so two runs of one version are always identical even if the source changed between them. Save a <b>new version</b> to adopt a change — unless a node is set to <i>keep in sync with source</i>, which stays live on purpose.</div>
+      <div class="doc-note"><b>A version pins its components when it is defined.</b> Components &amp; subjects are <b>versioned too</b> (every behavioural edit makes a new version; a name/description edit doesn't). The moment you save a pipeline — new pipeline or new version — each node <b>pins</b> a specific component/subject version (default = the current one; editable per node in the builder). Every run of the pipeline version uses those exact pins, so it stays reproducible even after the component/subject gains newer versions. Editing a component/subject never disturbs an existing pipeline version — save a <b>new pipeline version</b> and pick the newer version to adopt a change.</div>
       <div class="doc-sub">Build &amp; run</div>
       ${steps([
         `Open <b>Pipelines</b> → ${btn('+ New pipeline')} to open the builder.`,
@@ -3101,11 +3180,11 @@ function renderDocs(){
         `<b>Configurable args.</b> Each component declares its own args (required / optional / optional-with-default; a default may be a secret); the user fills them per node when building a pipeline.`,
         `<b>Multi-platform execution.</b> A container can run on Docker, Cloud Run, Lambda, Cloudflare Workers or Supabase Functions — chosen per container. Platform credentials live in Settings and are NOT secrets.`,
         `<b>Container sources.</b> Private images are pulled via a connected registry (Docker Hub, GCP AR, ECR, GHCR, ACR, custom) attached to the component; a source's credentials are registry access config, not the app's secrets.`,
-        `<b>Versioning.</b> Every pipeline edit makes a new version; runs belong to a version and all aggregation is per version. Editing a component or subject does NOT change existing versions (they keep their snapshot) — you manually create a new version to adopt the change.`,
+        `<b>Everything is versioned.</b> Pipelines, <b>components</b> AND <b>subjects</b> are versioned the same way: every <b>behavioural</b> change makes a new immutable version; a <b>name/description</b> edit (and a subject's display-name/metadata) is applied in place and makes no version. Each component/subject detail page lists its versions, like a pipeline's.`,
+        `<b>Pipelines pin a version.</b> A pipeline node pins a specific component/subject <b>version</b> (default = that entity's current version when the pipeline version is defined; editable per node in the builder). Editing a component/subject later NEVER changes an existing pipeline version — it keeps the version it pinned, so it stays reproducible with no warning or extra step. To adopt a newer version, save a new pipeline version and pick it in the node's version selector. (This replaced the old "keep in sync" opt-out, which is gone.)`,
         `<b>Version chaining.</b> You can chain 2+ versions of the same pipeline so their runs aggregate as one config (handy after a trivial cascade-version). Same-pipeline only — never across pipelines.`,
-        `<b>Runs are point-in-time snapshots.</b> A run freezes the full config of every component it used — wiring, entered arg values, AND each component's definition (arg schema, image, compatibility) as it was WHEN IT RAN. If a component later gains a new arg, older runs still show the old shape, so you always see exactly which pipeline produced those results.`,
+        `<b>Runs inherit their pipeline version's pins.</b> A run freezes the wiring + entered arg values, and resolves each node's pinned component/subject version. If a component later gains a new arg, older runs still pin the old version and show the old shape, so you always see exactly which definition produced those results.`,
         `<b>Fixed image tags.</b> A component's image should pin a fixed tag (e.g. <span class="mono">:1.4.0</span>) or a digest — strongly recommended (not enforced). <span class="mono">:latest</span>/no-tag is warned because it re-points to different code on rebuild, breaking reusability and run history.`,
-        `<b>Keep in sync (advanced).</b> A node can opt out of snapshotting so it always uses the component's current source definition — which makes that pipeline version <b>no longer reproducible</b> (source changes flow into it). Risky: a new required arg upstream then breaks runs until fixed by hand.`,
       ])}
       <div class="doc-note"><b>Builder implementation note.</b> This demo's pipeline builder is hand-rolled (single self-contained file, opens over <span class="mono">file://</span>). The real app should use <b>React Flow</b> — it supports typed handles on any side (top / bottom / left / right) natively, which a from-scratch canvas here provides by hand.</div>
     </div>`;
@@ -3139,8 +3218,8 @@ function confirmDialog(opts){
 }
 const HELP={
   dashboard:{t:'Dashboard',b:`<p><b>What.</b> The at-a-glance health view of your backtesting workspace.</p><p><b>How.</b> It aggregates every result across runs — average quality, per-subject leaderboard, a quality-over-time chart, and recent runs — all computed from the same in-memory data the other pages write to.</p><p><b>Why.</b> Backtesting is about tracking quality <i>day by day</i>; this is where regressions and improvements surface first.</p>`},
-  subjects:{t:'Subjects',b:`<p><b>What.</b> The things under test — any model or agent at a remote endpoint. There is <b>no LLM/agent type</b>: a subject is just a <b>name + properties</b>.</p><p><b>How.</b> Properties (base_url, model, api_key, …) are each bound to a stored <b>secret</b> or a literal value. A subject also declares which <b>connector</b> containers it is compatible with — it can wire to any of them.</p><p><b>Why.</b> Subjects are what you score. Free-form property bags (not fixed fields, no type) let any model or agent be tested the same way. Identity = name + properties (metadata excluded).</p>`},
-  components:{t:'Components',b:`<p><b>What.</b> The container images PBIntra orchestrates. Six kinds: <b>connector</b>, <b>storage</b>, <b>runner</b>, <b>scorer</b>, <b>uploader</b> — plus a special <b>scout</b> (not wired into a pipeline).</p><p><b>How.</b> A component is just a prebuilt image URL plus a name (its DB id). It may declare <b>configurable arguments</b> (each required, optional, or optional-with-default — and a default may be a secret); the user fills these in when placing the component in a pipeline. An <b>API schema is optional</b> — upload an OpenAPI spec to document the component (rendered on its detail page); leave it out and nothing is shown. There is no default schema.</p><p><b>Why.</b> Everything is a container so anyone can extend the platform — publish an image that speaks the contract and it plugs in, no core changes.</p>`},
+  subjects:{t:'Subjects',b:`<p><b>What.</b> The things under test — any model or agent at a remote endpoint. There is <b>no LLM/agent type</b>: a subject is just a <b>name + properties</b>.</p><p><b>How.</b> Properties (base_url, model, api_key, …) are each bound to a stored <b>secret</b> or a literal value. A subject also declares which <b>connector</b> containers it is compatible with — it can wire to any of them.</p><p><b>Versioned.</b> Like components &amp; pipelines, a subject is <b>versioned</b>: changing its properties or compatible connectors makes a new version; a name/display-name/metadata edit does not. A pipeline pins a specific subject version.</p><p><b>Why.</b> Subjects are what you score. Free-form property bags (not fixed fields, no type) let any model or agent be tested the same way. Identity = name + properties (metadata excluded).</p>`},
+  components:{t:'Components',b:`<p><b>What.</b> The container images PBIntra orchestrates. Six kinds: <b>connector</b>, <b>storage</b>, <b>runner</b>, <b>scorer</b>, <b>uploader</b> — plus a special <b>scout</b> (not wired into a pipeline).</p><p><b>How.</b> A component is just a prebuilt image URL plus a name (its DB id). It may declare <b>configurable arguments</b> (each required, optional, or optional-with-default — and a default may be a secret); the user fills these in when placing the component in a pipeline. An <b>API schema is optional</b> — upload an OpenAPI spec to document the component (rendered on its detail page); leave it out and nothing is shown. There is no default schema.</p><p><b>Versioned.</b> Like pipelines, a component is <b>versioned</b>: every behavioural edit (image/args/source/compatibility) makes a new version; a name/description edit does not. Its detail page lists all versions, and a pipeline pins a specific one.</p><p><b>Why.</b> Everything is a container so anyone can extend the platform — publish an image that speaks the contract and it plugs in, no core changes.</p>`},
   connector:{t:'Connector',b:`<p><b>What.</b> The container that lets PBIntra <b>talk to a subject</b> — the adapter at the end of the wire.</p><p><b>How.</b> It exposes an OpenAI-compatible API (<code>/v1/chat/completions</code>). The runner sends a test case to the connector, which calls the actual subject and returns the response.</p><p><b>Why.</b> Subjects speak many protocols; the connector normalizes them behind one schema so the runner never needs subject-specific code. Only compatible connectors can wire to a subject.</p>`},
   storage:{t:'Storage',b:`<p><b>What.</b> The container that <b>finds and serves test cases</b> to the runner.</p><p><b>How.</b> It exposes <code>/api/testcases</code> (all), <code>/api/testcases/next</code> (cursor/foreach) and <code>/api/testcases/count</code>. Source can be a HuggingFace dataset, S3, Postgres, anything.</p><p><b>Why.</b> Decoupling the data source from the run means the same pipeline can be pointed at any dataset by swapping one container.</p>`},
   runner:{t:'Runner',b:`<p><b>What.</b> The <b>orchestrator</b> that drives one run.</p><p><b>How.</b> It pulls test cases from storage (possibly <b>several</b> storages), sends each to subjects through the connector, then hands responses to the scorer(s). It also receives each subject's <b>metadata</b> (owner, tier, region…) so it can use it if needed. It assembles <code>{ testCase, response, score }</code> and <b>reports each result to the PBIntra hub</b>.</p><p><b>Why.</b> Centralizing the loop in one container keeps connectors/storages/scorers simple and single-purpose. A runner is outbound-only (nothing calls it), so it never needs its own API schema.</p>`},
@@ -3151,7 +3230,7 @@ const HELP={
   subject_node:{t:'Subject node',b:`<p><b>What.</b> One subject placed into a run's pipeline.</p><p><b>How.</b> Drag its output port to a <b>compatible</b> connector — PBIntra refuses incompatible wiring. Each subject is its own node, so a run can test many at once.</p><p><b>Why.</b> Per-subject nodes make it explicit which models a run covers and how each reaches its connector.</p>`},
   pipelines:{t:'Pipelines',b:`<p><b>What.</b> A named, reusable graph of components — the thing the builder produces.</p><p><b>How.</b> Assemble it on the canvas and Save. From the Pipelines list hit <b>Run</b> to execute it (that creates a run), or <b>Edit</b> to reopen it in the builder.</p><p><b>Why.</b> Separating the reusable definition (pipeline) from each execution (run) lets you launch the same setup repeatedly and compare results over time.</p>`},
   runs:{t:'Runs',b:`<p><b>What.</b> One execution of a pipeline against your subjects, producing results.</p><p><b>How.</b> Runs are launched from the <b>Pipelines</b> page (Run button). Each run freezes the pipeline's graph at launch time and stores it with its results.</p><p><b>Why.</b> Re-running the same pipeline over time is how you measure quality trends. Runs have no name of their own — they show the pipeline's name and when they ran.</p>`},
-  builder:{t:'Pipeline builder',b:`<p><b>What.</b> A visual editor (like mage.ai) for composing a <b>pipeline</b>.</p><p><b>How.</b> Add nodes from the palette (they come in empty), drag a node's output port onto another's input to wire them, click a wire to cut it, click a node to configure it: pick its container, choose the <b>platform to run it on</b> (only platforms connected in Settings appear), and fill in the <b>arguments the container declares</b> (required ones must be set; others fall back to their default). Compatibility is enforced (subject→connector, and the runner's declared components). Save to store the named pipeline; run it from the Pipelines page.</p><p><b>Why.</b> A pipeline is a small DAG of containers; a canvas makes that structure — and what feeds what — obvious and editable.</p>`},
+  builder:{t:'Pipeline builder',b:`<p><b>What.</b> A visual editor (like mage.ai) for composing a <b>pipeline</b>.</p><p><b>How.</b> Add nodes from the palette (they come in empty), drag a node's output port onto another's input to wire them, click a wire to cut it, click a node to configure it: pick its container, choose the <b>platform to run it on</b> (only platforms connected in Settings appear), fill in the <b>arguments the container declares</b> (required ones must be set; others fall back to their default), and pick which <b>version</b> of the component/subject this node pins (defaults to the latest). Compatibility is enforced (subject→connector, and the runner's declared components). Save to store the named pipeline; run it from the Pipelines page.</p><p><b>Why.</b> A pipeline is a small DAG of containers; a canvas makes that structure — and what feeds what — obvious and editable.</p>`},
   settings:{t:'Execution platforms',b:`<p><b>What.</b> The platforms PBIntra can run a container on — <b>Docker</b>, <b>Google Cloud Run</b>, <b>AWS Lambda</b>, <b>Cloudflare Workers</b>, <b>Supabase Functions</b>.</p><p><b>How.</b> Click <b>Add platform</b>, pick a type, then enter its access config or use a <b>Login to X</b> flow — add as many as you like (even several of one type, e.g. two GCP projects). Then, in the builder, pick a platform <b>per container</b> — only added platforms are offered.</p><p><b>Why.</b> Different containers run best in different places (a GPU job on Cloud Run, a tiny scorer on Lambda…). These are only the access config PBIntra needs to create the job and pull the image.</p>`},
   containerSources:{t:'Container sources',b:`<p><b>What.</b> Connections to the container <b>registries</b> PBIntra pulls component images from — <b>Docker Hub</b>, <b>Google Artifact Registry</b>, <b>Amazon ECR</b>, <b>GHCR</b>, <b>Azure ACR</b>, or a custom Docker v2 registry.</p><p><b>How.</b> Click <b>Add container source</b>, pick a registry type, then enter credentials or use a <b>Login to X</b> flow. Then, when you register a component, attach the matching source next to its <b>image URL</b> so PBIntra can pull a <b>private</b> image. Public images need no source.</p><p><b>Why.</b> Teams keep their runner/connector/scorer images in private registries. Connecting the registry once lets every component that lives there be pulled without re-entering credentials.</p>`},
   shapes:{t:'Shapes',b:`<p><b>What.</b> Rendering rules for the schemaless entities (test case, response, score).</p><p><b>How.</b> PBIntra lists every distinct entity <b>shape</b> it has seen. For each, you design how it renders — map JSONPath fields to UI elements (text, badge, score-meter, audio, …) in rows/columns. Undefined shapes fall back to raw.</p><p><b>Why.</b> Runners emit free-form JSON, so no fixed schema exists. Shapes let humans decide how each observed structure should look — once — and every run follows it.</p>`},
@@ -3221,17 +3300,23 @@ function openDrawer(kind, editIdx){
       })).filter(p=>p.value);
       const meta=[...$('#metaRows').children].map(r=>({key:r.querySelector('.mk').value.trim(), value:r.querySelector('.mv').value.trim()})).filter(m=>m.key);
       if(es){
+        // BEHAVIOURAL edit (connectors/properties changed) → new version; name/display/metadata edits stay in place.
+        // Existing pipeline versions keep the subject version they pinned. Flat fields mirror the LATEST version.
+        const before=subjExecSig(es);
         es.name=name; es.displayName=displayName||undefined; es.connectors=connectors; es.properties=properties; es.meta=meta;
+        const behavioural = before!==subjExecSig(es);
+        if(behavioural){ es.version=(es.version||1)+1; es.versions=es.versions||[]; es.versions.unshift({version:es.version,createdAt:'just now',note:'edited',def:subjDef(es)}); }
         renderSubjects();
-        if($('[data-page="subjectDetail"]').classList.contains('active')) openSubject(es.id);
-        // like components: editing a subject does NOT touch existing versions — user re-versions manually to adopt it
-        toast('Subject “'+name+'” updated');
+        if($('[data-page="subjectDetail"]').classList.contains('active')){ if(behavioural) subjVerSel[es.id]=es.version; openSubject(es.id); }
+        toast('Subject “'+name+'” '+(behavioural?'updated → v'+es.version:'updated'));
       } else {
         const id='s'+Math.random().toString(36).slice(2,6);
         const base=70+Math.floor(Math.random()*15);
-        subjects.push({id,name,displayName:displayName||undefined,score:base,
+        const s={id,name,displayName:displayName||undefined,score:base,
           trend:Array.from({length:SCORE_DAYS},(_,i)=>Math.round(base-6+i*0.4+(Math.random()*4-2))),
-          connectors, properties, meta});
+          connectors, properties, meta};
+        s.version=1; s.versions=[{version:1,createdAt:'just now',note:'initial',def:subjDef(s)}];
+        subjects.push(s);
         renderSubjects(); toast('Subject “'+name+'” added');
       }
     };
@@ -3344,31 +3429,24 @@ function openDrawer(kind, editIdx){
       if(argsClean.length) obj.args=argsClean;   // configurable-arg schema (REAL-IMPL NOTE 10)
       const source=$('#f_source')?$('#f_source').value:''; if(source) obj.source=source;   // optional private-registry source (REAL-IMPL NOTE 12)
       if(desc) obj.desc=desc;   // optional human description, shown on the detail page
-      // NOTE: editing a component does NOT touch existing pipeline versions — each version keeps the snapshot it
-      // pinned when created (REAL-IMPL NOTE 13). The user manually creates a new version to adopt the change.
-      const doSave=()=>{
-        if(ec){ components[editIdx]=obj; renderComponents(); if($('[data-page="componentDetail"]').classList.contains('active')) openComponent(editIdx); toast('Component “'+name+'” updated'); }
-        else { const at=components.findIndex(c=>!c.builtin); components.splice(at<0?components.length:at,0,obj); renderComponents(); toast('Component “'+name+'” registered'); }
-      };
-      // Editing a component + an execution-affecting field (anything but name/desc) changed → warn ONLY IF a
-      // pipeline uses it with KEEP-IN-SYNC-WITH-SOURCE on (REAL-IMPL NOTE 21). Snapshot-pinned usages (the default)
-      // already froze the component, so they're unaffected and need no warning — keep-sync is what leaks the change.
-      if(ec && componentExecSig(ec)!==componentExecSig(obj)){
-        const users=pipelinesKeepSyncingComponent(ec.name);
-        if(users.length){
-          confirmDialog({
-            title:'Update a kept-in-sync component?',
-            confirmLabel:'Update component',
-            bodyHtml:`<div class="cfm-warn">These pipelines keep <b>${escapeHtml(ec.name)}</b> in sync, so your change takes effect on their <b>next run</b>.</div>
-              <p><b>Past runs are safe</b> — each froze the component when it ran.</p>
-              <p>The catch: these versions stop being <b>reproducible</b>. If the change affects behaviour, cut a <b>new version</b> (or turn off keep-sync).</p>
-              <div class="cfm-list">${users.map(u=>`<span class="cfm-chip">${escapeHtml(u)}</span>`).join('')}</div>`,
-            onConfirm:()=>{ doSave(); closeDrawer(); },
-          });
-          return false;   // keep the drawer open; the dialog drives the apply/close
+      if(ec){
+        // BEHAVIOURAL edit (anything but name/desc changed) → create a NEW version; name/desc-only edit stays in place.
+        // Either way, existing pipeline versions keep the version they pinned (REAL-IMPL NOTE 13/21). Carry the
+        // version history forward; the flat fields always mirror the LATEST version's def.
+        const behavioural = componentExecSig(ec)!==componentExecSig(obj);
+        obj.versions = ec.versions ? ec.versions.map(v=>({...v})) : [];
+        obj.version = ec.version || 1;
+        if(behavioural){
+          obj.version = (ec.version||1)+1;
+          obj.versions.unshift({version:obj.version, createdAt:'just now', note:'edited', def:compDef(obj)});
         }
+        components[editIdx]=obj; renderComponents();
+        if($('[data-page="componentDetail"]').classList.contains('active')){ compVerSel[obj.name]=obj.version; openComponent(editIdx); }
+        toast('Component “'+name+'” '+(behavioural?'updated → v'+obj.version:'updated'));
+      } else {
+        obj.version=1; obj.versions=[{version:1,createdAt:'just now',note:'initial',def:compDef(obj)}];
+        const at=components.findIndex(c=>!c.builtin); components.splice(at<0?components.length:at,0,obj); renderComponents(); toast('Component “'+name+'” registered');
       }
-      doSave();
     };
   }
   if(kind==='platform' || kind==='source'){
@@ -3713,14 +3791,20 @@ function selectNode(n){
     $('#drawerTitle').textContent='Subject node'; $('#drawerSub').textContent='which subject to test';
     $('#drawerBody').innerHTML=`
       <div class="field"><label>Subject</label><select id="nc_subj">${opts}</select></div>
+      <div class="field"><label>Subject version</label><select id="nc_sver"></select>
+        <div class="hint">Pins which <b>version</b> of the subject the pipeline uses. Defaults to the <b>latest</b>; older pipeline versions keep the version they pinned.</div></div>
       <div class="field"><label>Compatible connectors</label><div id="nc_compat"></div>
         <div class="hint">Declared on the subject. It can only be wired to a matching <span class="tag connector">connector</span> node.</div></div>`;
+    // version options for the CURRENTLY selected subject (default = pinned version or the subject's latest)
+    const fillSVer=()=>{ const sel=$('#nc_sver'); const s=subjById($('#nc_subj').value); const vers=(s&&s.versions)||[];
+      const pinned=(s&&s.id===n.sid)?(n.subjVer||s.version):(s?s.version:1);
+      sel.innerHTML=vers.map(v=>`<option value="${v.version}" ${v.version===pinned?'selected':''}>v${v.version}${v.version===(s?s.version:1)?' · latest':''}</option>`).join('')||'<option value="1" selected>v1</option>'; };
     const showCompat=()=>{ const s=subjById($('#nc_subj').value); const ps=(s?.connectors||[]);
       $('#nc_compat').innerHTML=ps.length?ps.map(p=>`<div class="endpoint-row" style="margin-bottom:6px"><span class="tag connector">connector</span> ${p}</div>`).join(''):'<div class="empty" style="padding:12px">none — this subject cannot connect to any connector</div>'; };
-    showCompat(); $('#nc_subj').onchange=showCompat;
+    fillSVer(); showCompat(); $('#nc_subj').onchange=()=>{ fillSVer(); showCompat(); };
     $('#drawerFoot').innerHTML='';
     const cancel=el('button','btn ghost','Cancel'); cancel.onclick=closeDrawer;
-    const save=el('button','btn primary','Apply'); save.onclick=()=>{ n.sid=$('#nc_subj').value; pruneInvalidEdges(); renderNodes(); drawEdges(); closeDrawer(); toast('Subject set'); };
+    const save=el('button','btn primary','Apply'); save.onclick=()=>{ n.sid=$('#nc_subj').value; n.subjVer=+($('#nc_sver').value||1); pruneInvalidEdges(); renderNodes(); drawEdges(); closeDrawer(); toast('Subject set'); };
     $('#drawerFoot').append(cancel,save);
     overlay.classList.add('show'); drawer.classList.add('show'); return;
   }
@@ -3734,20 +3818,20 @@ function selectNode(n){
       <div class="hint">Pulled from your registered <b>Components</b>.</div></div>
     <div class="field"><label>Run on platform</label><select id="nc_plat">${platOpts}</select>
       <div class="hint">Where PBIntra runs this container. Only <b>connected</b> platforms appear — add more in <b>Settings</b>.</div></div>
+    <div class="field"><label>Component version</label><select id="nc_ver"></select>
+      <div class="hint">Pins which <b>version</b> of this component the pipeline uses. Defaults to the <b>latest</b>; older pipeline versions keep the version they pinned, so they stay reproducible.</div></div>
     <div class="field"><label>Arguments</label><div id="argRows"></div>
-      <div class="hint" id="argHint"></div></div>
-    <details class="adv"><summary>Advanced</summary>
-      <div class="field" style="margin-top:10px">
-        <label class="cad-sec" style="font-size:12.5px"><input type="checkbox" id="nc_sync" ${n.keepSync?'checked':''}> Keep in sync with source</label>
-        <div class="hint" style="margin-top:7px">When on, this component is <b>not snapshotted</b> — the version always uses the source's <b>current</b> definition. This means the version is <b>no longer reproducible</b>: any later change to the source (image tag/version, args, compatibility…) silently applies to <b>this same version</b> and changes what it runs. <span style="color:var(--amber)">⚠ And if the source adds a <b>required</b> arg that isn't set here, runs <b>fail</b> until you fix it by hand.</span> Leave off for reproducible, self-contained versions.</div>
-      </div>
-    </details>`;
-  renderNodeArgs(n);
-  // args are declared BY the selected component → re-render the arg fields when the component changes
-  $('#nc_comp').onchange=()=>renderNodeArgs(n);
+      <div class="hint" id="argHint"></div></div>`;
+  // populate the version selector for the CURRENTLY selected component (default = pinned version or the component's latest)
+  const fillVerOpts=()=>{ const sel=$('#nc_ver'); if(!sel) return; const c=components.find(x=>x.name===$('#nc_comp').value);
+    const vers=(c&&c.versions)||[]; const pinned=(c&&c.name===n.comp)?(n.compVer||c.version):(c?c.version:1);
+    sel.innerHTML=vers.map(v=>`<option value="${v.version}" ${v.version===pinned?'selected':''}>v${v.version}${v.version===(c?c.version:1)?' · latest':''}${v.note&&v.note!=='current'?' · '+escapeHtml(v.note):''}</option>`).join('')||'<option value="1" selected>v1</option>'; };
+  fillVerOpts(); renderNodeArgs(n);
+  // args + versions are declared BY the selected component → re-populate both when the component changes
+  $('#nc_comp').onchange=()=>{ fillVerOpts(); renderNodeArgs(n); };
   $('#drawerFoot').innerHTML='';
   const cancel=el('button','btn ghost','Cancel'); cancel.onclick=closeDrawer;
-  const save=el('button','btn primary','Apply'); save.onclick=()=>{ n.comp=$('#nc_comp').value; n.platform=$('#nc_plat').value; n.keepSync=$('#nc_sync').checked; pruneInvalidEdges(); renderNodes(); drawEdges(); closeDrawer(); toast(n.type+' set to '+n.comp); };
+  const save=el('button','btn primary','Apply'); save.onclick=()=>{ n.comp=$('#nc_comp').value; n.platform=$('#nc_plat').value; n.compVer=+($('#nc_ver').value||1); pruneInvalidEdges(); renderNodes(); drawEdges(); closeDrawer(); toast(n.type+' set to '+n.comp+' v'+n.compVer); };
   $('#drawerFoot').append(cancel,save);
   overlay.classList.add('show'); drawer.classList.add('show');
 }
